@@ -1,5 +1,6 @@
 import math
 import logging
+import heapq
 from models import Atom, Mer, Location, Interaction
 
 logger = logging.getLogger(__name__)
@@ -49,8 +50,35 @@ def parse_atom_line(line):
         return None
 
 def calculate_interactions(mers):
-    interactions = []
+    # CHANGED: Incorporate logic from Java code.
+    # We first identify bonds by checking COM distances and then individual atom pairs.
+    # After that, we list interactions.
     mer_list = list(mers.values())
+
+    for i in range(len(mer_list)):
+        src = mer_list[i]
+        for j in range(len(mer_list)):
+            if i == j:
+                continue
+            dst = mer_list[j]
+
+            # Check COM distance threshold of 10.0 Å
+            if src.center_of_mass.distance_to(dst.center_of_mass) <= 10.0:
+                # Check atoms pairwise
+                bonded = False
+                for src_atom in src.atoms:
+                    for dst_atom in dst.atoms:
+                        if src_atom.location.distance_to(dst_atom.location) < 4.5:
+                            src.add_bond(dst)
+                            dst.add_bond(src)
+                            bonded = True
+                            # Once we have found a bond, no need to check further atom pairs
+                            break
+                    if bonded:
+                        break
+
+    # Now build the list of interactions from bonded Mers
+    interactions = []
     for i in range(len(mer_list)):
         for j in range(i+1, len(mer_list)):
             src = mer_list[i]
@@ -58,43 +86,58 @@ def calculate_interactions(mers):
             if src.is_bonded_to(dst):
                 inter = Interaction(src, dst)
                 interactions.append(inter)
+
     return interactions
 
 def build_adjacency_map(mers):
+    # CHANGED: Ensure symmetry as in the Java code.
     adjacency_map = {}
     for mer in mers.values():
         adjacency_map[mer] = {}
 
     all_mers = list(mers.values())
-    for i, from_mer in enumerate(all_mers):
-        for j, to_mer in enumerate(all_mers):
-            if i == j:
-                continue
-            bond_count = from_mer.get_bond_count_with(to_mer)
+    for from_mer in all_mers:
+        # Assume `from_mer.bond_count` is similar to the Java version: 
+        # a dict mapping another mer to an integer bond count.
+        for to_mer, bond_count in from_mer.bond_count.items():
             if bond_count > 0:
                 affinity = bond_count / math.sqrt(len(from_mer.atoms) * len(to_mer.atoms))
                 weight = 1.0 / affinity
                 adjacency_map[from_mer][to_mer] = weight
+                # Ensure symmetry
+                if to_mer not in adjacency_map:
+                    adjacency_map[to_mer] = {}
+                adjacency_map[to_mer][from_mer] = weight
+
+    # Remove any empty entries if needed
+    adjacency_map = {m: adj for m, adj in adjacency_map.items() if adj}
     return adjacency_map
 
 def dijkstra(adjacency_map, source_mer):
-    distances = {m: math.inf for m in adjacency_map.keys()}
+    distances = {m: math.inf for m in adjacency_map}
     distances[source_mer] = 0.0
     visited = set()
-    unvisited = list(adjacency_map.keys())
+    unvisited = set(adjacency_map.keys())
 
     while unvisited:
+        # Pick the mer with the smallest known distance that is still unvisited
         current = min(unvisited, key=lambda m: distances[m])
         unvisited.remove(current)
         visited.add(current)
 
+        # If the smallest distance is infinity, remaining nodes are unreachable
+        if distances[current] == math.inf:
+            break
+
+        # Update distances to neighbors
         for neighbor, weight in adjacency_map[current].items():
-            if neighbor in visited:
-                continue
-            new_dist = distances[current] + weight
-            if new_dist < distances[neighbor]:
-                distances[neighbor] = new_dist
+            if neighbor not in visited:
+                new_dist = distances[current] + weight
+                if new_dist < distances[neighbor]:
+                    distances[neighbor] = new_dist
+
     return distances
+
 
 def find_best_source_mer(mers, adjacency_map):
     best_mer = None
@@ -123,46 +166,69 @@ def format_atom_line(atom):
     line = f"{recordName:6s}{serial:5d} {name:>4s} {resName:>3s} {chainID:1s}{resSeq:4d}    {x:8.3f}{y:8.3f}{z:8.3f}{occupancy:6.2f}{tempFactor:6.2f}"
     return line
 
-def generate_enhanced_pdb(raw_lines, source_mer, shortest_paths, interactions, mers):
-    # Compute maxDistance
-    finite_distances = [d for d in shortest_paths.values() if not math.isinf(d)]
+import os
+import math
 
-    if not finite_distances:
-        # No finite distances, default to 1.0
-        max_distance = 1.0
-    else:
-        max_distance = max(finite_distances)
-        # If max_distance is 0.0, set it to 1.0 to prevent division by zero
-        if max_distance == 0.0:
-            max_distance = 1.0
+import os
+import math
+from io import StringIO
 
-    # Update tempFactor of atoms based on distances
-    for mer in mers.values():
-        distance = shortest_paths.get(mer, math.inf)
-        temp_factor_value = 0.0 if math.isinf(distance) else (distance / max_distance) * 100.0
-        for atom in mer.atoms:
-            atom.temp_factor = temp_factor_value
+def generate_enhanced_pdb(distances, source_mer, original_file):
+    """
+    Generate a PDB-formatted string annotated with distances from a given source mer.
+    Distances are stored in the B-factor (temperature factor) column of the ATOM records.
 
-    sb = []
-    # Append non-ATOM/HETATM lines
-    for line in raw_lines:
-        if not (line.startswith("ATOM") or line.startswith("HETATM")):
-            sb.append(line.strip())
+    Parameters:
+        distances (dict): A dictionary mapping Mer objects to their shortest distance from source_mer.
+        source_mer (Mer): The reference Mer object from which distances were calculated.
+        original_file (str or Path): The path to the original PDB file.
 
-    # Append updated ATOM lines
-    for mer in mers.values():
-        for atom in mer.atoms:
-            atom_line = format_atom_line(atom)
-            sb.append(atom_line)
+    Returns:
+        str: The resulting PDB-formatted string with distances annotated.
+    """
 
-    sb.append(f"REMARK 1 Source Mer: {source_mer.name}")
-    sb.append("REMARK 2 Shortest Paths:")
-    for m, d in shortest_paths.items():
-        sb.append(f"REMARK 3 {m.name}: {d}")
-    sb.append("REMARK 4 Interactions:")
-    for inter in interactions:
-        sb.append(f"REMARK 5 {inter}")
-    return "\n".join(sb)
+    # Use a string buffer to build the output
+    output_buffer = StringIO()
+
+    # Read the original file
+    with open(original_file, 'r') as reader:
+        # Copy headers from the original file until the first ATOM/HETATM line
+        for line in reader:
+            if line.startswith("ATOM") or line.startswith("HETATM"):
+                # Once we reach an ATOM/HETATM line, stop copying headers
+                # We don't need to process the original ATOM/HETATM lines for this output,
+                # so we break here.
+                break
+            output_buffer.write(line)
+
+    # Write explanatory headers
+    output_buffer.write("REMARK Distances from source mer {} are stored in the temperature factor column.\n".format(source_mer.name))
+    output_buffer.write("REMARK Other fields such as atom ID, charge, and occupancy may be placeholders.\n\n")
+
+    # Write out the distances as ATOM lines
+    # Each Mer is represented by a single CA line with the distance as the B-factor.
+    for mer, distance in distances.items():
+        # Retrieve the center of mass location for coordinates (fallback to 0,0,0 if None)
+        loc = mer.center_of_mass if mer.center_of_mass is not None else type('Location', (), {'x':0.0, 'y':0.0, 'z':0.0})()
+
+        output_buffer.write(
+            "ATOM  {:>5d} {:<4s} {:>3s} {:1s}{:>4d}    {:>8.3f}{:>8.3f}{:>8.3f}{:>6.2f}{:>6.2f}          {:2s}\n".format(
+                0,                          # Atom serial number placeholder
+                "CA",                       # Atom name
+                mer.type,                   # Residue name
+                mer.chain,                  # Chain ID
+                mer.mer_id,                 # Residue sequence number
+                loc.x, loc.y, loc.z,        # Coordinates (from center of mass)
+                1.0,                        # Occupancy
+                distance,                   # B-factor = distance
+                ""                          # Element symbol
+            )
+        )
+
+    # Return the entire PDB content as a string
+    return output_buffer.getvalue()
+
+
 
 def process_pdb_file(file_path):
     raw_lines = read_input_file(file_path)
@@ -171,17 +237,14 @@ def process_pdb_file(file_path):
     adjacency_map = build_adjacency_map(mers)
     best_source_mer = find_best_source_mer(mers.values(), adjacency_map)
 
-    # Generate enhanced PDB for every mer as the source, not just best source mer
+    # Generate enhanced PDB for every mer as the source
     all_enhanced_pdbs = {}
     all_distances = {}
     for source_mer in mers.values():
         distances = dijkstra(adjacency_map, source_mer)
-        enhanced_pdb = generate_enhanced_pdb(raw_lines, source_mer, distances, interactions, mers)
+        enhanced_pdb = generate_enhanced_pdb(distances, source_mer, file_path)
         all_enhanced_pdbs[source_mer.name] = enhanced_pdb
         all_distances[source_mer.name] = distances
 
-    # shortest_paths for the best_source_mer:
     shortest_paths = all_distances[best_source_mer.name]
-
-    # Now we return all enhanced pdb files so that the UI can provide download options for each mer
     return best_source_mer.name, mers, shortest_paths, all_enhanced_pdbs

@@ -7,6 +7,12 @@ class Location:
         self.y = y
         self.z = z
 
+    def distance_to(self, other):
+        dx = self.x - other.x
+        dy = self.y - other.y
+        dz = self.z - other.z
+        return (dx * dx + dy * dy + dz * dz) ** 0.5
+
 class Atom:
     def __init__(self, atom_id, name, atom_type, charge, location, temp_factor, mer=None):
         self.atom_id = atom_id
