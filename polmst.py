@@ -235,13 +235,23 @@ def process_pdb_file(file_path):
     mers = parse_atoms(raw_lines)
     interactions = calculate_interactions(mers)
     adjacency_map = build_adjacency_map(mers)
-    best_source_mer = find_best_source_mer(mers.values(), adjacency_map)
 
-    # Generate enhanced PDB for every mer as the source
+    # Find the best source mer and generate enhanced PDBs in a single pass
     all_enhanced_pdbs = {}
     all_distances = {}
+    best_source_mer = None
+    min_total_distance = math.inf
+
     for source_mer in mers.values():
         distances = dijkstra(adjacency_map, source_mer)
+        total_distance = sum(d for d in distances.values() if not math.isinf(d))
+
+        # Check if the current source_mer is the best
+        if total_distance < min_total_distance:
+            min_total_distance = total_distance
+            best_source_mer = source_mer
+
+        # Generate enhanced PDB
         enhanced_pdb = generate_enhanced_pdb(distances, source_mer, file_path)
         all_enhanced_pdbs[source_mer.name] = enhanced_pdb
         all_distances[source_mer.name] = distances
