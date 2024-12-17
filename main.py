@@ -25,7 +25,7 @@ class MainWindow(QMainWindow):
                 on_back=go_to_welcome,
                 on_mer_list=go_to_mer_list,
                 processed_files=self.processed_files
-            ))
+            )) 
 
         def go_to_mer_list(best_source_mer, download_data, processed_files):
             self.processed_files = processed_files
