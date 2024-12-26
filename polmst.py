@@ -50,9 +50,6 @@ def parse_atom_line(line):
         return None
 
 def calculate_interactions(mers):
-    # CHANGED: Incorporate logic from Java code.
-    # We first identify bonds by checking COM distances and then individual atom pairs.
-    # After that, we list interactions.
     mer_list = list(mers.values())
 
     for i in range(len(mer_list)):
@@ -61,21 +58,17 @@ def calculate_interactions(mers):
             if i == j:
                 continue
             dst = mer_list[j]
-
-            # Check COM distance threshold of 10.0 Å
-            if src.center_of_mass.distance_to(dst.center_of_mass) <= 10.0:
-                # Check atoms pairwise
-                bonded = False
-                for src_atom in src.atoms:
-                    for dst_atom in dst.atoms:
-                        if src_atom.location.distance_to(dst_atom.location) < 4.5:
-                            src.add_bond(dst)
-                            dst.add_bond(src)
-                            bonded = True
-                            # Once we have found a bond, no need to check further atom pairs
-                            break
-                    if bonded:
+            bonded = False
+            for src_atom in src.atoms:
+                for dst_atom in dst.atoms:
+                    if src_atom.location.distance_to(dst_atom.location) < 4.5:
+                        src.add_bond(dst)
+                        dst.add_bond(src)
+                        bonded = True
+                        # Once we have found a bond, no need to check further atom pairs
                         break
+                if bonded:
+                    break
 
     # Now build the list of interactions from bonded Mers
     interactions = []

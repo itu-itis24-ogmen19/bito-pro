@@ -1,4 +1,3 @@
-# models.py
 import math
 
 class Location:

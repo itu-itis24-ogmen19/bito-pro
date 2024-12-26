@@ -1,4 +1,3 @@
-# ui/mer_list_page.py
 import os
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QListWidget, 
@@ -6,6 +5,10 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QFont
+
+from ui.resource_locate import resource_path
+
+
 
 class MerListPage(QWidget):
     def __init__(self, best_source_mer, download_data, processed_files, on_back, on_view_mer):
@@ -71,7 +74,7 @@ class MerListPage(QWidget):
         mer_names = list(self.download_data.keys())
         self.mer_table.setRowCount(len(mer_names))
 
-        check_icon_path = os.path.join("assets", "images", "yellow_check.png")
+        check_icon_path = resource_path(os.path.join("assets", "images", "yellow_check.png"))
         check_icon = QIcon(check_icon_path) if os.path.exists(check_icon_path) else QIcon()
 
         for row, mer_name in enumerate(mer_names):

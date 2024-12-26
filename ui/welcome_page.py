@@ -1,8 +1,12 @@
-# ui/welcome_page.py
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtCore import Qt
+
 import os
+
+from ui.resource_locate import resource_path
+
+
 
 class WelcomePage(QWidget):
     def __init__(self, on_get_started):
@@ -11,7 +15,7 @@ class WelcomePage(QWidget):
         self.setLayout(layout)
         
         # Load an image
-        image_path = os.path.join("assets", "images", "protein_icon.png")
+        image_path = resource_path(os.path.join("assets", "images", "protein_icon.png"))
         pixmap = QPixmap(image_path)
         image_label = QLabel()
         image_label.setPixmap(pixmap.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation))

@@ -1,4 +1,3 @@
-# main.py
 import sys
 import numpy as np
 
@@ -7,7 +6,10 @@ from PySide6.QtWidgets import QApplication, QMainWindow
 from ui.welcome_page import WelcomePage
 from ui.file_upload_page import FileUploadPage
 from ui.mer_list_page import MerListPage
-from ui.protein_vispy_viewer_page import ProteinVisPyViewerPage  # New import
+from ui.protein_vispy_viewer_page import ProteinVisPyViewerPage  
+
+
+import sys
 
 class MainWindow(QMainWindow):
     def __init__(self):
