@@ -1,0 +1,4 @@
+*.pdb
+*.ds_store
+/__pycache__/
+/ui/__pycache__/
