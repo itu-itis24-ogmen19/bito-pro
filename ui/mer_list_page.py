@@ -1,3 +1,5 @@
+# /Users/m3_air/24-25 fall/Bitirme/bito-pro-main/ui/mer_list_page.py
+
 import os
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QListWidget, 
@@ -8,14 +10,14 @@ from PySide6.QtGui import QIcon, QFont
 
 from ui.resource_locate import resource_path
 
-
-
 class MerListPage(QWidget):
-    def __init__(self, best_source_mer, download_data, processed_files, on_back, on_view_mer):
+    def __init__(self, best_source_mer, download_data, processed_files, interactions, total_weight_sums, on_back, on_view_mer):
         super().__init__()
         self.best_source_mer = best_source_mer
         self.download_data = download_data
         self.processed_files = processed_files
+        self.interactions = interactions
+        self.total_weight_sums = total_weight_sums
         self.on_back = on_back
         self.on_view_mer = on_view_mer
 
@@ -105,7 +107,8 @@ class MerListPage(QWidget):
             self.status_label.setText(f"No PDB data found for {mer_name}.")
             return
         self.status_label.setText(f"Viewing Mer '{mer_name}'...")
-        self.on_view_mer(mer_name, pdb_content)
+        # Pass all required data to the viewer
+        self.on_view_mer(mer_name, pdb_content, self.interactions, self.total_weight_sums)
 
     def download_pdb(self, mer_name):
         pdb_content = self.download_data.get(mer_name, "")
@@ -120,11 +123,13 @@ class MerListPage(QWidget):
             self.status_label.setText(f"{mer_name}.pdb saved successfully.")
 
     def load_previous_result(self, item):
+        # Find the corresponding processed file based on the text
         selected_text = item.text()
         for pf in self.processed_files:
             entry_str = f"{pf.file_name} - {pf.timestamp}"
             if entry_str == selected_text:
                 self.status_label.setText(f"Loading previous result for '{pf.file_name}'...")
                 self.populate_mer_table(pf.best_source_mer, pf.download_data)
+                self.on_mer_list(pf.best_source_mer, pf.download_data, self.processed_files, pf.interactions, pf.total_weight_sums)
                 return
         self.status_label.setText("Could not find the selected previous result.")

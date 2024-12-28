@@ -1,3 +1,5 @@
+# /Users/m3_air/24-25 fall/Bitirme/bito-pro-main/main.py
+
 import sys
 import numpy as np
 
@@ -8,8 +10,6 @@ from ui.file_upload_page import FileUploadPage
 from ui.mer_list_page import MerListPage
 from ui.protein_vispy_viewer_page import ProteinVisPyViewerPage  
 
-
-import sys
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -29,24 +29,30 @@ class MainWindow(QMainWindow):
                 processed_files=self.processed_files
             )) 
 
-        def go_to_mer_list(best_source_mer, download_data, processed_files):
+        def go_to_mer_list(best_source_mer, download_data, processed_files, interactions, total_weight_sums):
             self.processed_files = processed_files
             self.current_best_mer = best_source_mer
             self.current_download_data = download_data
+            self.current_interactions = interactions
+            self.current_total_weight_sums = total_weight_sums
             self.setCentralWidget(MerListPage(
                 best_source_mer=best_source_mer,
                 download_data=download_data,
                 processed_files=self.processed_files,
+                interactions=interactions,
+                total_weight_sums=total_weight_sums,
                 on_back=go_to_file_upload,
                 on_view_mer=go_to_protein_viewer
             ))
 
-        def go_to_protein_viewer(mer_name, pdb_content):
+        def go_to_protein_viewer(mer_name, pdb_content, interactions, total_weight_sums):
             def on_back():
-                go_to_mer_list(self.current_best_mer, self.current_download_data, self.processed_files)
+                go_to_mer_list(self.current_best_mer, self.current_download_data, self.processed_files, self.current_interactions, self.current_total_weight_sums)
             self.setCentralWidget(ProteinVisPyViewerPage(
                 mer_name=mer_name,
                 pdb_content=pdb_content,
+                interactions=interactions,
+                total_weight_sums=total_weight_sums,
                 on_back=on_back
             ))
 

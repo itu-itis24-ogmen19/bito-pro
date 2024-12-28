@@ -1,3 +1,5 @@
+# /Users/m3_air/24-25 fall/Bitirme/bito-pro-main/ui/protein_vispy_viewer_page.py
+
 import math
 import numpy as np
 from PySide6.QtWidgets import (
@@ -14,17 +16,18 @@ import os
 from ui.resource_locate import resource_path
 
 
-
 class ProteinVisPyViewerPage(QWidget):
-    def __init__(self, mer_name, pdb_content, on_back):
+    def __init__(self, mer_name, pdb_content, interactions, total_weight_sums, on_back):
         super().__init__()
         self.mer_name = mer_name
         self.pdb_content = pdb_content
+        self.interactions = interactions  # List of Interaction objects
+        self.total_weight_sums = total_weight_sums  # dict of mer_name: total_weight_sum
         self.on_back = on_back
 
-        self.atoms = []
+        self.mers = {}
         self.positions = None
-        self.bonds = []
+        self.mer_names = []
 
         self.main_layout = QVBoxLayout(self)
 
@@ -60,13 +63,13 @@ class ProteinVisPyViewerPage(QWidget):
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.main_layout.addWidget(self.loading_label, alignment=Qt.AlignCenter)
 
-        # We will create the canvas but not add it yet.
-        self.canvas = scene.SceneCanvas(keys='interactive', show=False)  
+        # VisPy Canvas (initially hidden)
+        self.canvas = scene.SceneCanvas(keys='interactive', show=False)
         self.canvas.bgcolor = 'white'
         self.view = self.canvas.central_widget.add_view()
         self.view.camera = 'turntable'
 
-        # Parse and draw after a slight delay so UI can show initial progress
+        # Schedule parsing and drawing after a short delay
         QTimer.singleShot(100, self.parse_and_draw)
 
         self.setLayout(self.main_layout)
@@ -76,83 +79,138 @@ class ProteinVisPyViewerPage(QWidget):
         self.progress_bar.setValue(10)
         QApplication.processEvents()
 
-        # Parse PDB content to get atoms and bonds
-        atoms, bonds = self.parse_pdb_atoms_and_bonds(self.pdb_content)
-        self.atoms = atoms
-        self.bonds = bonds
+        # Parse PDB content to get mers and positions
+        self.mers, _ = self.parse_pdb_content(self.pdb_content)
+        self.mer_names = list(self.mers.keys())
 
         self.progress_bar.setValue(30)
         QApplication.processEvents()
 
-        if not atoms:
-            self.progress_label.setText("No atoms found.")
+        if not self.mers:
+            self.progress_label.setText("No Mers found.")
             self.progress_bar.setValue(100)
             return
 
-        # Extract positions and temp factors
-        self.positions = np.array([(atom['x'], atom['y'], atom['z']) for atom in atoms])
-        temp_factors = np.array([atom['temp_factor'] for atom in atoms])
+        # Assign positions for visualization
+        positions = np.array([self.mers[name]['position'] for name in self.mer_names])
 
-        # Normalize temp factors
-        min_tf = temp_factors.min()
-        max_tf = temp_factors.max()
-        if max_tf != min_tf:
-            normalized_tf = (temp_factors - min_tf) / (max_tf - min_tf)
+        # Normalize positions for visualization
+        positions -= positions.mean(axis=0)
+        scale = np.max(np.linalg.norm(positions, axis=1))
+        if scale > 0:
+            positions /= scale
+
+        # Assign total weight sums to Mers
+        weight_sums = np.array([self.total_weight_sums.get(name, 0.0) for name in self.mer_names])
+
+        # Normalize weight sums for coloring
+        min_weight = weight_sums.min()
+        max_weight = weight_sums.max()
+        if max_weight != min_weight:
+            normalized_weight = (weight_sums - min_weight) / (max_weight - min_weight)
         else:
-            normalized_tf = np.full_like(temp_factors, 0.5)
+            normalized_weight = np.full_like(weight_sums, 0.5)
+
+        # Map normalized weight sums to colors (low weight → red, high weight → blue)
+        cmap = get_colormap('coolwarm')  # Reversed 'coolwarm' colormap
+        colors = cmap.map(normalized_weight)
+
+        # Set the color of the source mer to yellow
+        try:
+            source_index = self.mer_names.index(self.mer_name)
+            colors[source_index] = [1.0, 1.0, 0.0, 1.0]  # RGBA for yellow
+        except ValueError:
+            pass  # If source mer not found, skip
 
         self.progress_bar.setValue(50)
         QApplication.processEvents()
 
-        # Map colors
-        cmap = get_colormap('coolwarm')
-        colors = cmap.map(normalized_tf)
-
-        # Create scatter plot
+        # Create scatter plot for Mers with weight sum-based colors
         scatter = scene.visuals.Markers(parent=self.view.scene)
-        scatter.set_data(self.positions, face_color=colors, size=10)
+        scatter.set_data(positions, face_color=colors, size=10)
 
-        self.progress_bar.setValue(70)
-        QApplication.processEvents()
-
-        # Add text labels
-        for i, atom in enumerate(atoms):
-            label_text = f"{atom['full_name']} (TF={atom['temp_factor']:.2f})"
+        # Add labels for Mers
+        for idx, name in enumerate(self.mer_names):
+            label_text = name
             text = scene.visuals.Text(
                 text=label_text,
-                pos=self.positions[i],
+                pos=positions[idx],
                 color='black',
-                font_size=120,
-                anchor_x='left',
-                anchor_y='bottom',
-                parent=self.view.scene
-            )
-            text.pos = (self.positions[i][0] + 0.3, self.positions[i][1] + 0.3, self.positions[i][2])
-
-        # Create lines for bonds and add labels
-        for bond in bonds:
-            i, j = bond
-            pos = np.array([self.positions[i], self.positions[j]])
-            line = scene.visuals.Line(pos, color='black', width=1, parent=self.view.scene)
-
-            # Compute midpoint and distance
-            midpoint = (pos[0] + pos[1]) / 2.0
-            dx = pos[1][0] - pos[0][0]
-            dy = pos[1][1] - pos[0][1]
-            dz = pos[1][2] - pos[0][2]
-            dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-            affinity = 1.0/dist if dist != 0 else 0.0
-
-            edge_label = scene.visuals.Text(
-                text=f"Affinity={affinity:.2f}",
-                pos=midpoint,
-                color='blue',
-                font_size=100,
+                font_size=10,  # Adjusted for readability
                 anchor_x='center',
                 anchor_y='center',
                 parent=self.view.scene
             )
-            edge_label.pos = (midpoint[0], midpoint[1] + 0.2, midpoint[2])
+            # Offset the label slightly above the Mer
+            text.pos = (positions[idx][0], positions[idx][1], positions[idx][2] + 0.05)
+
+        self.progress_bar.setValue(70)
+        QApplication.processEvents()
+
+        # Collect all weight values for bond coloring
+        weights = [interaction.weight for interaction in self.interactions]
+        weights = np.array(weights)
+
+        if len(weights) > 0:
+            # Normalize weights
+            min_weight_val = weights.min()
+            max_weight_val = weights.max()
+            if max_weight_val != min_weight_val:
+                normalized_weight_val = (weights - min_weight_val) / (max_weight_val - min_weight_val)
+            else:
+                normalized_weight_val = np.full_like(weights, 0.5)
+
+            # Choose a colormap for bonds
+            cmap_bonds = get_colormap('autumn')  # 'plasma' for high contrast
+
+            # Map normalized weight to colors
+            colors_bonds = ['black'] * len(normalized_weight_val)
+
+            # Create lines for bonds and add weight labels
+            for idx, interaction in enumerate(self.interactions):
+                from_mer = interaction.from_mer  # string
+                to_mer = interaction.to_mer      # string
+                weight = interaction.weight  # float
+
+                # Get indices of the Mers
+                try:
+                    i = self.mer_names.index(from_mer)
+                    j = self.mer_names.index(to_mer)
+                except ValueError:
+                    continue  # Skip if Mer not found
+
+                # Get positions
+                pos1 = positions[i]
+                pos2 = positions[j]
+
+                # Get color for this bond
+                color = colors_bonds[idx]
+
+                # Create a line between the two Mers with weight-based color
+                line = scene.visuals.Line(
+                    pos=np.array([pos1, pos2]),
+                    color=color,
+                    width=0.5,
+                    connect='segments',
+                    parent=self.view.scene
+                )
+
+                # Compute midpoint for weight label
+                midpoint = (pos1 + pos2) / 2.0
+
+                # Create a text label for weight
+                weight_text = f"{weight:.2f}"
+                text = scene.visuals.Text(
+                    text=weight_text,
+                    pos=midpoint,
+                    color='black',  # Contrast with bond color
+                    font_size=4,    # Adjusted for readability
+                    anchor_x='center',
+                    anchor_y='center',
+                    parent=self.view.scene
+                )
+                # Offset the label slightly above the bond
+                text.pos = (midpoint[0], midpoint[1], midpoint[2] + 0.02)
 
         self.progress_bar.setValue(90)
         QApplication.processEvents()
@@ -160,7 +218,7 @@ class ProteinVisPyViewerPage(QWidget):
         # Zoom to fit
         self.view.camera.set_range()
 
-        # Now UI is ready, set progress to 100%
+        # Finalize progress
         self.progress_bar.setValue(100)
         self.progress_label.setText("Processing graph...")
         QApplication.processEvents()
@@ -178,39 +236,21 @@ class ProteinVisPyViewerPage(QWidget):
         self.main_layout.addWidget(self.canvas.native)
         self.canvas.show()
 
-    def parse_pdb_atoms_and_bonds(self, pdb_content, bond_threshold=4.5):
-        atoms = []
+    def parse_pdb_content(self, pdb_content):
+        mers = {}
         lines = pdb_content.split('\n')
         for line in lines:
             if line.startswith('ATOM') or line.startswith('HETATM'):
                 try:
-                    x = float(line[30:38])
-                    y = float(line[38:46])
-                    z = float(line[46:54])
-                    temp_factor = float(line[60:66])
-                    residue_name = line[17:20].strip()
-                    chain_id = line[21].strip()
-                    residue_number = line[22:26].strip()
-                    atom_name = line[12:16].strip()
-                    full_name = f"{atom_name}-{residue_name}({chain_id}){residue_number}"
-                    atoms.append({
-                        'x': x,
-                        'y': y,
-                        'z': z,
-                        'temp_factor': temp_factor,
-                        'full_name': full_name
-                    })
+                    # Assuming mer_name is formatted as "ResidueName-ResidueNumber(ChainID)"
+                    mer_name = line[17:20].strip() + "-" + line[22:26].strip() + "(" + line[21].strip() + ")"
+                    x = float(line[30:38].strip())
+                    y = float(line[38:46].strip())
+                    z = float(line[46:54].strip())
+                    mers[mer_name] = {
+                        'position': (x, y, z),
+                        'bond_count': 0  # Initialize bond count
+                    }
                 except ValueError:
                     pass
-
-        # Calculate bonds based on distance threshold
-        bonds = []
-        for i in range(len(atoms)):
-            for j in range(i+1, len(atoms)):
-                dx = atoms[i]['x'] - atoms[j]['x']
-                dy = atoms[i]['y'] - atoms[j]['y']
-                dz = atoms[i]['z'] - atoms[j]['z']
-                dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-                if dist < bond_threshold:
-                    bonds.append((i, j))
-        return atoms, bonds
+        return mers, None

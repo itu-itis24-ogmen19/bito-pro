@@ -1,3 +1,5 @@
+# /Users/m3_air/24-25 fall/Bitirme/bito-pro-main/polmst.py
+
 import math
 import logging
 import heapq
@@ -65,7 +67,6 @@ def calculate_interactions(mers):
                         src.add_bond(dst)
                         dst.add_bond(src)
                         bonded = True
-                        # Once we have found a bond, no need to check further atom pairs
                         break
                 if bonded:
                     break
@@ -83,104 +84,155 @@ def calculate_interactions(mers):
     return interactions
 
 def build_adjacency_map(mers):
-    # CHANGED: Ensure symmetry as in the Java code.
+    """
+    Builds an adjacency map where each Mer is a node, and edges represent interactions
+    weighted by their calculated weights. Ensures that the adjacency map is symmetric.
+    """
     adjacency_map = {}
     for mer in mers.values():
-        adjacency_map[mer] = {}
+        adjacency_map[mer.name] = {}  # Initialize adjacency list for each Mer
 
     all_mers = list(mers.values())
     for from_mer in all_mers:
-        # Assume `from_mer.bond_count` is similar to the Java version: 
-        # a dict mapping another mer to an integer bond count.
-        for to_mer, bond_count in from_mer.bond_count.items():
+        for to_mer_name, bond_count in from_mer.bond_count.items():
             if bond_count > 0:
-                affinity = bond_count / math.sqrt(len(from_mer.atoms) * len(to_mer.atoms))
+                if to_mer_name not in mers:
+                    # Log warning and skip if to_mer not found
+                    logger.warning(f"Mer {to_mer_name} not found in mers dictionary.")
+                    continue
+                to_mer_obj = mers[to_mer_name]  # Look up the Mer object using its name
+                # Calculate affinity
+                affinity = bond_count / math.sqrt(len(from_mer.atoms) * len(to_mer_obj.atoms))
+                # Calculate weight as inverse of affinity
                 weight = 1.0 / affinity
-                adjacency_map[from_mer][to_mer] = weight
-                # Ensure symmetry
-                if to_mer not in adjacency_map:
-                    adjacency_map[to_mer] = {}
-                adjacency_map[to_mer][from_mer] = weight
+                adjacency_map[from_mer.name][to_mer_obj.name] = weight
+                # Ensure symmetry in the adjacency map
+                adjacency_map[to_mer_obj.name][from_mer.name] = weight
 
-    # Remove any empty entries if needed
+    # Remove any Mers with no connections
     adjacency_map = {m: adj for m, adj in adjacency_map.items() if adj}
     return adjacency_map
 
+
 def dijkstra(adjacency_map, source_mer):
+    """
+    Implements Dijkstra's algorithm to compute the shortest paths from the source Mer
+    to all other Mers in the adjacency map.
+
+    Parameters:
+        adjacency_map (dict): The adjacency map with weights.
+        source_mer (str): The name of the source Mer.
+
+    Returns:
+        tuple: A dictionary of shortest distances and a dictionary of predecessors.
+    """
     distances = {m: math.inf for m in adjacency_map}
     distances[source_mer] = 0.0
+    predecessors = {m: None for m in adjacency_map}
     visited = set()
     unvisited = set(adjacency_map.keys())
 
     while unvisited:
-        # Pick the mer with the smallest known distance that is still unvisited
+        # Select the unvisited Mer with the smallest known distance
         current = min(unvisited, key=lambda m: distances[m])
         unvisited.remove(current)
         visited.add(current)
 
-        # If the smallest distance is infinity, remaining nodes are unreachable
+        # If the smallest distance is infinity, remaining Mers are unreachable
         if distances[current] == math.inf:
             break
 
-        # Update distances to neighbors
+        # Update distances to neighboring Mers
         for neighbor, weight in adjacency_map[current].items():
             if neighbor not in visited:
                 new_dist = distances[current] + weight
                 if new_dist < distances[neighbor]:
                     distances[neighbor] = new_dist
+                    predecessors[neighbor] = current
 
-    return distances
-
+    return distances, predecessors
 
 def find_best_source_mer(mers, adjacency_map):
+    """
+    Identifies the best source Mer based on the smallest total weight to all other Mers.
+
+    Parameters:
+        mers (dict): Dictionary of Mer objects.
+        adjacency_map (dict): The adjacency map with weights.
+
+    Returns:
+        str: The name of the best source Mer.
+    """
     best_mer = None
     min_total_distance = math.inf
-    for source_mer in mers:
-        dist = dijkstra(adjacency_map, source_mer)
+    for source_mer in adjacency_map.keys():
+        dist, _ = dijkstra(adjacency_map, source_mer)
         total_distance = sum(d for d in dist.values() if not math.isinf(d))
         if total_distance < min_total_distance:
             min_total_distance = total_distance
             best_mer = source_mer
     return best_mer
 
-def format_atom_line(atom):
-    recordName = "ATOM  "
-    serial = atom.atom_id
-    name = f"{atom.name:<4}"
-    resName = f"{atom.type:<3}"
-    chainID = atom.mer.chain
-    resSeq = atom.mer.mer_id
-    x = atom.location.x
-    y = atom.location.y
-    z = atom.location.z
-    occupancy = 1.0
-    tempFactor = atom.temp_factor
-
-    line = f"{recordName:6s}{serial:5d} {name:>4s} {resName:>3s} {chainID:1s}{resSeq:4d}    {x:8.3f}{y:8.3f}{z:8.3f}{occupancy:6.2f}{tempFactor:6.2f}"
-    return line
-
-import os
-import math
-
-import os
-import math
-from io import StringIO
-
-def generate_enhanced_pdb(distances, source_mer, original_file):
+def reconstruct_path(predecessors, target_mer):
     """
-    Generate a PDB-formatted string annotated with distances from a given source mer.
-    Distances are stored in the B-factor (temperature factor) column of the ATOM records.
+    Reconstructs the shortest path from the source Mer to the target Mer.
 
     Parameters:
-        distances (dict): A dictionary mapping Mer objects to their shortest distance from source_mer.
-        source_mer (Mer): The reference Mer object from which distances were calculated.
-        original_file (str or Path): The path to the original PDB file.
+        predecessors (dict): Dictionary mapping each Mer to its predecessor in the path.
+        target_mer (str): The name of the target Mer.
 
     Returns:
-        str: The resulting PDB-formatted string with distances annotated.
+        list: The list of Mers representing the shortest path.
+    """
+    path = []
+    current = target_mer
+    while current is not None:
+        path.append(current)
+        current = predecessors[current]
+    path.reverse()
+    return path
+
+def sum_weights_along_path(mers, interactions, path):
+    """
+    Sums the weights of interactions along a given path of Mers.
+
+    Parameters:
+        mers (dict): Dictionary of Mer objects.
+        interactions (list): List of Interaction objects.
+        path (list): The list of Mers representing the path.
+
+    Returns:
+        float: The total weight sum along the path.
+    """
+    total_weight = 0.0
+    for i in range(len(path) -1 ):
+        from_mer = path[i]
+        to_mer = path[i+1]
+        # Find the interaction between from_mer and to_mer
+        for interaction in interactions:
+            if (interaction.from_mer == from_mer and interaction.to_mer == to_mer) or \
+               (interaction.from_mer == to_mer and interaction.to_mer == from_mer):
+                total_weight += interaction.weight
+                break
+    return total_weight
+
+def generate_enhanced_pdb(weights, source_mer, original_file, mers):
+    """
+    Generates a PDB-formatted string annotated with weights from a given source Mer.
+    Weights are stored in the B-factor (temperature factor) column of the ATOM records.
+
+    Parameters:
+        weights (dict): A dictionary mapping Mer names to their shortest weight from source_mer.
+        source_mer (str): The reference Mer name from which weights were calculated.
+        original_file (str or Path): The path to the original PDB file.
+        mers (dict): Dictionary of Mer objects with mer_name as key.
+
+    Returns:
+        str: The resulting PDB-formatted string with weights annotated.
     """
 
     # Use a string buffer to build the output
+    from io import StringIO
     output_buffer = StringIO()
 
     # Read the original file
@@ -195,25 +247,38 @@ def generate_enhanced_pdb(distances, source_mer, original_file):
             output_buffer.write(line)
 
     # Write explanatory headers
-    output_buffer.write("REMARK Distances from source mer {} are stored in the temperature factor column.\n".format(source_mer.name))
+    output_buffer.write("REMARK Weights from source mer {} are stored in the temperature factor column.\n".format(source_mer))
     output_buffer.write("REMARK Other fields such as atom ID, charge, and occupancy may be placeholders.\n\n")
 
-    # Write out the distances as ATOM lines
-    # Each Mer is represented by a single CA line with the distance as the B-factor.
-    for mer, distance in distances.items():
+    # Write out the weights as ATOM lines
+    # Each Mer is represented by a single CA line with the weight as the B-factor.
+    for mer, weight in weights.items():
         # Retrieve the center of mass location for coordinates (fallback to 0,0,0 if None)
-        loc = mer.center_of_mass if mer.center_of_mass is not None else type('Location', (), {'x':0.0, 'y':0.0, 'z':0.0})()
+        if mer in mers and mers[mer].center_of_mass is not None:
+            loc = mers[mer].center_of_mass
+        else:
+            loc = Location(0.0, 0.0, 0.0)
+
+        try:
+            residue_number = int(mer.split('-')[1].split('(')[0])
+        except:
+            residue_number = 0
+
+        try:
+            chain_id = mer.split('(')[1][0]
+        except:
+            chain_id = ' '
 
         output_buffer.write(
             "ATOM  {:>5d} {:<4s} {:>3s} {:1s}{:>4d}    {:>8.3f}{:>8.3f}{:>8.3f}{:>6.2f}{:>6.2f}          {:2s}\n".format(
                 0,                          # Atom serial number placeholder
                 "CA",                       # Atom name
-                mer.type,                   # Residue name
-                mer.chain,                  # Chain ID
-                mer.mer_id,                 # Residue sequence number
+                mer.split('-')[0],          # Residue name
+                chain_id,       # Chain ID
+                residue_number,  # Residue sequence number
                 loc.x, loc.y, loc.z,        # Coordinates (from center of mass)
                 1.0,                        # Occupancy
-                distance,                   # B-factor = distance
+                weight,                     # B-factor = weight
                 ""                          # Element symbol
             )
         )
@@ -229,25 +294,33 @@ def process_pdb_file(file_path):
     interactions = calculate_interactions(mers)
     adjacency_map = build_adjacency_map(mers)
 
-    # Find the best source mer and generate enhanced PDBs in a single pass
+    # Find the best source mer
+    best_source_mer = find_best_source_mer(mers, adjacency_map)
+    if best_source_mer is None:
+        raise ValueError("No valid source mer found.")
+
+    # Perform Dijkstra from the best source mer
+    distances, predecessors = dijkstra(adjacency_map, best_source_mer)
+
+    # For each mer, reconstruct the path and sum weights
+    total_weight_sums = {}
+    for mer in adjacency_map.keys():
+        if mer == best_source_mer:
+            total_weight_sums[mer] = 0.0  # Source mer has sum 0
+            continue
+        if math.isinf(distances[mer]):
+            total_weight_sums[mer] = math.inf  # Unreachable
+            continue
+        path = reconstruct_path(predecessors, mer)
+        total_weight = sum_weights_along_path(mers, interactions, path)
+        total_weight_sums[mer] = total_weight
+
+    # Generate enhanced PDBs
     all_enhanced_pdbs = {}
-    all_distances = {}
-    best_source_mer = None
-    min_total_distance = math.inf
+    for source_mer in adjacency_map.keys():
+        distances_source, _ = dijkstra(adjacency_map, source_mer)
+        enhanced_pdb = generate_enhanced_pdb(distances_source, source_mer, file_path, mers)
+        all_enhanced_pdbs[source_mer] = enhanced_pdb
 
-    for source_mer in mers.values():
-        distances = dijkstra(adjacency_map, source_mer)
-        total_distance = sum(d for d in distances.values() if not math.isinf(d))
-
-        # Check if the current source_mer is the best
-        if total_distance < min_total_distance:
-            min_total_distance = total_distance
-            best_source_mer = source_mer
-
-        # Generate enhanced PDB
-        enhanced_pdb = generate_enhanced_pdb(distances, source_mer, file_path)
-        all_enhanced_pdbs[source_mer.name] = enhanced_pdb
-        all_distances[source_mer.name] = distances
-
-    shortest_paths = all_distances[best_source_mer.name]
-    return best_source_mer.name, mers, shortest_paths, all_enhanced_pdbs
+    # Return the best source mer's name, mers, total_weight_sums, all_enhanced_pdbs, interactions
+    return best_source_mer, mers, total_weight_sums, all_enhanced_pdbs, interactions
