@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QPixmap
 from vispy import scene
-from vispy.color import get_colormap
+from vispy.color import get_colormap, Colormap
 from vispy.scene import visuals
 from PySide6.QtWidgets import QApplication
 import os
@@ -113,7 +113,10 @@ class ProteinVisPyViewerPage(QWidget):
 
         # Map normalized weight sums to colors (low weight → red, high weight → blue)
         cmap = get_colormap('coolwarm')
-        colors = cmap.map(normalized_weight)
+        reversed_cmap = Colormap(cmap.colors[::-1])  # Reverse the colormap's colors
+        colors = reversed_cmap.map(normalized_weight)
+
+        #colors = cmap.map(normalized_weight)
 
         # Set the color of the source mer to yellow
         try:
