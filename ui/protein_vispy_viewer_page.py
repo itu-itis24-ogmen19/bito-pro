@@ -5,13 +5,40 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QPixmap
-from vispy import scene
-from vispy.color import get_colormap, Colormap
-from vispy.scene import visuals
 from PySide6.QtWidgets import QApplication
 import os
-
+import vtk
+from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from ui.resource_locate import resource_path
+
+
+# --- Helper functions for color interpolation ---
+def lerp(a, b, t):
+    return a + (b - a) * t
+
+def color_lerp(c1, c2, t):
+    return [lerp(c1[i], c2[i], t) for i in range(3)]
+
+def get_coolwarm_color(value):
+    """
+    value in [0,1].
+    Interpolates between:
+        0.0: [0.2298, 0.2987, 0.7537]  (cool/blue)
+        0.5: [0.8650, 0.8650, 0.8650]  (whiteish/light gray center)
+        1.0: [0.7050, 0.0150, 0.1499]  (warm/red)
+    """
+    v = max(0.0, min(1.0, value))
+
+    cool_color = [0.2298, 0.2987, 0.7537]
+    mid_color  = [0.8650, 0.8650, 0.8650]
+    warm_color = [0.7050, 0.0150, 0.1499]
+
+    if v <= 0.5:
+        scale = (v - 0.0) / 0.5
+        return color_lerp(cool_color, mid_color, scale)
+    else:
+        scale = (v - 0.5) / 0.5
+        return color_lerp(mid_color, warm_color, scale)
 
 
 class ProteinVisPyViewerPage(QWidget):
@@ -20,7 +47,7 @@ class ProteinVisPyViewerPage(QWidget):
         self.mer_name = mer_name
         self.pdb_content = pdb_content
         self.interactions = interactions  # List of Interaction objects
-        self.total_weight_sums = total_weight_sums  # dict of mer_name: total_weight_sum
+        self.total_weight_sums = total_weight_sums  # Mapping of Mer names to total weights
         self.on_back = on_back
 
         self.mers = {}
@@ -53,7 +80,6 @@ class ProteinVisPyViewerPage(QWidget):
         self.loading_label = QLabel()
         if os.path.exists(loading_image_path):
             pixmap = QPixmap(loading_image_path)
-            # Scale pixmap to a reasonable size if it's large (e.g., 200x200)
             scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.loading_label.setPixmap(scaled_pixmap)
         else:
@@ -61,11 +87,17 @@ class ProteinVisPyViewerPage(QWidget):
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.main_layout.addWidget(self.loading_label, alignment=Qt.AlignCenter)
 
-        # VisPy Canvas (initially hidden)
-        self.canvas = scene.SceneCanvas(keys='interactive', show=False)
-        self.canvas.bgcolor = 'white'
-        self.view = self.canvas.central_widget.add_view()
-        self.view.camera = 'turntable'
+        # Prepare the VTK widget (initially hidden)
+        self.vtk_widget = QVTKRenderWindowInteractor(self)
+        self.renderer = vtk.vtkRenderer()
+        self.renderer.SetBackground(1.0, 1.0, 1.0)  # White background
+        self.vtk_widget.GetRenderWindow().AddRenderer(self.renderer)
+        self.interactor = self.vtk_widget.GetRenderWindow().GetInteractor()
+
+        style = vtk.vtkInteractorStyleTrackballCamera()
+        self.interactor.SetInteractorStyle(style)
+
+        self.vtk_widget.hide()  # Initially hidden
 
         # Schedule parsing and drawing after a short delay
         QTimer.singleShot(100, self.parse_and_draw)
@@ -73,7 +105,7 @@ class ProteinVisPyViewerPage(QWidget):
         self.setLayout(self.main_layout)
 
     def parse_and_draw(self):
-        # Update progress to show we are starting
+        # Update progress
         self.progress_bar.setValue(10)
         QApplication.processEvents()
 
@@ -111,108 +143,160 @@ class ProteinVisPyViewerPage(QWidget):
         else:
             normalized_weight = np.full_like(weight_sums, 0.5)
 
-        # Map normalized weight sums to colors (low weight → red, high weight → blue)
-        cmap = get_colormap('coolwarm')
-        reversed_cmap = Colormap(cmap.colors[::-1])  # Reverse the colormap's colors
-        colors = reversed_cmap.map(normalized_weight)
+        # Assign colors to Mers based on normalized weight
+        colors_rgba = []
+        for val in normalized_weight:
+            r, g, b = get_coolwarm_color(val)
+            a = 1.0
+            colors_rgba.append([r, g, b, a])
 
-        #colors = cmap.map(normalized_weight)
-
-        # Set the color of the source mer to yellow
+        # If the source Mer is found, color it yellow
         try:
             source_index = self.mer_names.index(self.mer_name)
-            colors[source_index] = [1.0, 1.0, 0.0, 1.0]  # RGBA for yellow
+            colors_rgba[source_index] = [1.0, 1.0, 0.0, 1.0]  # RGBA for yellow
         except ValueError:
-            pass  # If source mer not found, skip
+            pass
 
         self.progress_bar.setValue(50)
         QApplication.processEvents()
 
-        # Create scatter plot for Mers with weight sum-based colors
-        scatter = scene.visuals.Markers(parent=self.view.scene)
-        scatter.set_data(positions, face_color=colors, size=10)
+        # Create a vtkPolyData to store points
+        vtk_points = vtk.vtkPoints()
+        vtk_colors = vtk.vtkUnsignedCharArray()
+        vtk_colors.SetNumberOfComponents(3)  # We'll store RGB in [0..255]
 
-        # Add labels for Mers with total weight sums
-        for idx, name in enumerate(self.mer_names):
-            total_weight = self.total_weight_sums.get(name, 0.0)
-            label_text = f"{name} ({total_weight:.2f})"
-            text = scene.visuals.Text(
-                text=label_text,
-                pos=positions[idx],
-                color='black',
-                font_size=10,  # Adjusted for readability
-                anchor_x='center',
-                anchor_y='center',
-                parent=self.view.scene
-            )
-            # Offset the label slightly above the Mer
-            text.pos = (positions[idx][0], positions[idx][1], positions[idx][2] + 0.05)
+        for i, pos in enumerate(self.positions):
+            vtk_points.InsertNextPoint(pos[0], pos[1], pos[2])
+            # Convert float colors to [0..255] range
+            rgba_255 = [int(c * 255) for c in colors_rgba[i][:3]]
+            vtk_colors.InsertNextTypedTuple(rgba_255)
+
+        polydata = vtk.vtkPolyData()
+        polydata.SetPoints(vtk_points)
+        polydata.GetPointData().SetScalars(vtk_colors)
+
+        # Use a sphere source for glyphs
+        sphere_source = vtk.vtkSphereSource()
+        sphere_source.SetRadius(0.02)   # Adjust as needed
+
+        glyph_mapper = vtk.vtkGlyph3DMapper()
+        glyph_mapper.SetInputData(polydata)
+        glyph_mapper.SetSourceConnection(sphere_source.GetOutputPort())
+        glyph_mapper.SetColorModeToDirectScalars()
+        glyph_mapper.SetScalarModeToUsePointData()
+        glyph_mapper.SetScaleFactor(1.0)
+        glyph_mapper.ScalingOff()
+
+        glyph_actor = vtk.vtkActor()
+        glyph_actor.SetMapper(glyph_mapper)
+        self.renderer.AddActor(glyph_actor)
 
         self.progress_bar.setValue(70)
         QApplication.processEvents()
 
-        # Collect all weight values for bond coloring
-        # Since bonds are to remain black, we'll set them to black with desired transparency
-        # Remove any color mapping for bonds
-        if len(self.interactions) > 0:
-            # Define black color with transparency (alpha)
-            bond_color = np.array([0, 0, 0, 0.5])  # RGBA: Black with 50% transparency
+        # Draw lines for interactions (in black)
+        bond_color = [0, 0, 0]  # black
+        line_polydata = vtk.vtkPolyData()
+        line_points = vtk.vtkPoints()
+        lines = vtk.vtkCellArray()
 
-            for idx, interaction in enumerate(self.interactions):
-                from_mer = interaction.from_mer  # string
-                to_mer = interaction.to_mer      # string
-                weight = interaction.weight  # float
+        # Store midpoints + weights for labeling
+        edge_midpoints = []
+        edge_weights = []
 
-                # Get indices of the Mers
-                try:
-                    i = self.mer_names.index(from_mer)
-                    j = self.mer_names.index(to_mer)
-                except ValueError:
-                    continue  # Skip if Mer not found
+        for interaction in self.interactions:
+            from_mer = interaction.from_mer
+            to_mer = interaction.to_mer
+            weight = interaction.weight
 
-                # Get positions
-                pos1 = positions[i]
-                pos2 = positions[j]
+            try:
+                i = self.mer_names.index(from_mer)
+                j = self.mer_names.index(to_mer)
+            except ValueError:
+                continue
 
-                # Create a line between the two Mers with black color and transparency
-                line = scene.visuals.Line(
-                    pos=np.array([pos1, pos2]),
-                    color=bond_color,
-                    width=1.0,
-                    connect='segments',
-                    parent=self.view.scene
-                )
+            # Insert points for each line
+            p1_id = line_points.InsertNextPoint(self.positions[i])
+            p2_id = line_points.InsertNextPoint(self.positions[j])
 
-                # Compute midpoint for weight label
-                midpoint = (pos1 + pos2) / 2.0
+            line_cell = vtk.vtkLine()
+            line_cell.GetPointIds().SetId(0, p1_id)
+            line_cell.GetPointIds().SetId(1, p2_id)
+            lines.InsertNextCell(line_cell)
 
-                # Calculate angle for label rotation (optional, as full 3D rotation isn't straightforward)
-                delta = pos2 - pos1
-                angle = math.degrees(math.atan2(delta[1], delta[0]))  # 2D projection
+            # Compute midpoint for weight label
+            pos1 = self.positions[i]
+            pos2 = self.positions[j]
+            midpoint = (pos1 + pos2) / 2.0
+            edge_midpoints.append(midpoint)
+            edge_weights.append(weight)
 
-                # Create a text label for weight
-                weight_text = f"{weight:.2f}"
-                text = scene.visuals.Text(
-                    text=weight_text,
-                    pos=midpoint,
-                    color='black',  # Contrast with bond color
-                    font_size=8,    # Adjusted for readability
-                    anchor_x='center',
-                    anchor_y='center',
-                    parent=self.view.scene
-                )
-                # Offset the label slightly perpendicular to the bond
-                offset = np.array([-delta[1], delta[0], 0.0]) * 0.05  # Perpendicular offset
-                text.pos = midpoint + offset
+        line_polydata.SetPoints(line_points)
+        line_polydata.SetLines(lines)
 
-                # Note: VisPy's Text visual doesn't support rotation in 3D space directly.
-                # This workaround adjusts the position to mimic parallel alignment.
+        # Mapper/actor for lines
+        line_mapper = vtk.vtkPolyDataMapper()
+        line_mapper.SetInputData(line_polydata)
+        line_actor = vtk.vtkActor()
+        line_actor.SetMapper(line_mapper)
+        line_actor.GetProperty().SetColor(bond_color)
+        line_actor.GetProperty().SetOpacity(0.5)
+        line_actor.GetProperty().SetLineWidth(1.0)
+        self.renderer.AddActor(line_actor)
+
+        self.progress_bar.setValue(80)
+        QApplication.processEvents()
+
+        # Add 3D labels for each Mer (mer_name + total_weight)
+        for idx, name in enumerate(self.mer_names):
+            total_weight = self.total_weight_sums.get(name, 0.0)
+            label_text = f"{name} ({total_weight:.2f})"
+
+            # Use vtkVectorText + vtkFollower
+            vector_text = vtk.vtkVectorText()
+            vector_text.SetText(label_text)
+
+            text_mapper = vtk.vtkPolyDataMapper()
+            text_mapper.SetInputConnection(vector_text.GetOutputPort())
+
+            text_actor = vtk.vtkFollower()
+            text_actor.SetMapper(text_mapper)
+            text_actor.SetScale(0.01, 0.01, 0.01)  # Adjust
+            # Slightly offset above the sphere
+            text_actor.SetPosition(
+                positions[idx][0],
+                positions[idx][1],
+                positions[idx][2] + 0.04
+            )
+            text_actor.SetCamera(self.renderer.GetActiveCamera())
+            text_actor.GetProperty().SetColor(0.0, 0.0, 0.0)  # Black text
+            self.renderer.AddActor(text_actor)
+
+        # Add 3D labels for each edge's weight
+        for midpoint, weight in zip(edge_midpoints, edge_weights):
+            if math.isinf(weight):
+                continue
+            label_text = f"{weight:.2f}"
+
+            vector_text = vtk.vtkVectorText()
+            vector_text.SetText(label_text)
+
+            text_mapper = vtk.vtkPolyDataMapper()
+            text_mapper.SetInputConnection(vector_text.GetOutputPort())
+
+            text_actor = vtk.vtkFollower()
+            text_actor.SetMapper(text_mapper)
+            text_actor.SetScale(0.006, 0.006, 0.006)  # Slightly smaller
+            text_actor.SetPosition(midpoint[0], midpoint[1], midpoint[2])
+            text_actor.SetCamera(self.renderer.GetActiveCamera())
+            text_actor.GetProperty().SetColor(0.0, 0.0, 0.0)
+            self.renderer.AddActor(text_actor)
 
         self.progress_bar.setValue(90)
         QApplication.processEvents()
 
-        # Zoom to fit
-        self.view.camera.set_range()
+        # Adjust camera
+        self.renderer.ResetCamera()
 
         # Finalize progress
         self.progress_bar.setValue(100)
@@ -228,9 +312,13 @@ class ProteinVisPyViewerPage(QWidget):
         self.progress_bar.hide()
         self.loading_label.hide()
 
-        # Now add the canvas to the layout and show it
-        self.main_layout.addWidget(self.canvas.native)
-        self.canvas.show()
+        # Add the VTK widget to the layout and show it
+        self.main_layout.addWidget(self.vtk_widget)
+        self.vtk_widget.show()
+
+        # Initialize/Start the interactor
+        self.interactor.Initialize()
+        self.interactor.Start()
 
     def parse_pdb_content(self, pdb_content):
         mers = {}
@@ -238,7 +326,7 @@ class ProteinVisPyViewerPage(QWidget):
         for line in lines:
             if line.startswith('ATOM') or line.startswith('HETATM'):
                 try:
-                    # Assuming mer_name is formatted as "ResidueName-ResidueNumber(ChainID)"
+                    # Extract Mer name and position
                     mer_name = line[17:20].strip() + "-" + line[22:26].strip() + "(" + line[21].strip() + ")"
                     x = float(line[30:38].strip())
                     y = float(line[38:46].strip())

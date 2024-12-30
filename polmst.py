@@ -1,6 +1,5 @@
 import math
 import logging
-import heapq
 from models import Atom, Mer, Location, Interaction
 
 logger = logging.getLogger(__name__)
