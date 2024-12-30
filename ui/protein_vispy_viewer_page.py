@@ -75,7 +75,7 @@ class ProteinVisPyViewerPage(QWidget):
         self.progress_bar.setValue(0)
         self.main_layout.addWidget(self.progress_bar, alignment=Qt.AlignCenter)
 
-        # Loading image instead of showing partial graph
+        # Loading image (initially shown)
         loading_image_path = resource_path(os.path.join("assets", "images", "protein.png"))
         self.loading_label = QLabel()
         if os.path.exists(loading_image_path):

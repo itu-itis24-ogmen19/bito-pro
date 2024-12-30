@@ -11,7 +11,9 @@ class ProcessedFile:
     def __init__(
         self,
         file_name,
+        file_path,
         best_source_mer,
+        mers,
         download_data,
         interactions,
         total_weight_sums,
@@ -23,15 +25,19 @@ class ProcessedFile:
 
         Parameters:
             file_name (str): The name of the PDB file.
+            file_path (str): Full path of the PDB file (used for on-demand PDB generation).
             best_source_mer (str): The name of the best source Mer.
-            download_data (dict): Mapping of Mer names to their enhanced PDB content.
+            mers (dict): Dictionary of Mer objects from parsing.
+            download_data (dict): Mapping of Mer names to their enhanced PDB content (or None here).
             interactions (list): List of Interaction objects.
-            total_weight_sums (dict): Mapping of Mer names to their total distances from the best source.
+            total_weight_sums (dict): Mapping of Mer names to their distances from the best source.
             timestamp (datetime): When the file was processed.
             all_distance_sums (dict): Mer -> (dict of distances to all other Mers).
         """
         self.file_name = file_name
+        self.file_path = file_path
         self.best_source_mer = best_source_mer
+        self.mers = mers
         self.download_data = download_data
         self.interactions = interactions
         self.total_weight_sums = total_weight_sums
@@ -113,17 +119,21 @@ class FileUploadPage(QWidget):
         self.process_btn.setEnabled(False)
 
         try:
-            best_source_mer, mers, total_weight_sums, all_enhanced_pdbs, interactions, all_distance_sums = process_pdb_file(self.selected_file)
+            best_source_mer, mers, total_weight_sums, interactions, all_distance_sums = process_pdb_file(self.selected_file)
         except Exception as e:
             self.status_label.setText(f"Error processing file: {str(e)}")
             self.select_btn.setEnabled(True)
             self.process_btn.setEnabled(True)
             return
 
+        download_data = {mer_name: None for mer_name in mers.keys()}
+
         processed = ProcessedFile(
             file_name=os.path.basename(self.selected_file),
+            file_path=self.selected_file,
             best_source_mer=best_source_mer,
-            download_data=all_enhanced_pdbs,
+            mers=mers,
+            download_data=download_data,
             interactions=interactions,
             total_weight_sums=total_weight_sums,
             timestamp=datetime.datetime.now(),
@@ -138,7 +148,7 @@ class FileUploadPage(QWidget):
 
         self.on_mer_list(
             best_source_mer,
-            all_enhanced_pdbs,
+            processed.download_data,  # now has keys == all mer names
             self.processed_files,
             interactions,
             total_weight_sums,
@@ -153,7 +163,7 @@ class FileUploadPage(QWidget):
                 self.status_label.setText(f"Loading previous result for '{pf.file_name}'...")
                 self.on_mer_list(
                     pf.best_source_mer,
-                    pf.download_data,
+                    pf.download_data,  # may contain None for each mer_name
                     self.processed_files,
                     pf.interactions,
                     pf.total_weight_sums,

@@ -2,4 +2,5 @@
 *.DS_Store
 /__pycache__/
 /ui/__pycache__/
-cmd.txt
+outputs
+pdbs

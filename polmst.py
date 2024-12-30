@@ -1,5 +1,6 @@
 import math
 import logging
+import heapq
 from models import Atom, Mer, Location, Interaction
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,7 @@ def build_adjacency_map(mers):
                 adjacency_map[to_mer_obj.name][from_mer.name] = weight
 
     # Remove Mers with no connections
-    adjacency_map = {m: adj for m, adj in adjacency_map.items() if adj}
+    #adjacency_map = {m: adj for m, adj in adjacency_map.items() if adj}
     return adjacency_map
 
 def dijkstra(adjacency_map, source_mer):
@@ -125,7 +126,11 @@ def dijkstra(adjacency_map, source_mer):
 
     return distances, predecessors
 
+    # Generate an enhanced PDB file with the distances embedded in the Temp column
 def generate_enhanced_pdb(weights, source_mer, original_file, mers):
+    """
+    On-demand: embed the 'weights' (distances) into the Temp column for each Mer.
+    """
     from io import StringIO
     output_buffer = StringIO()
 
@@ -186,23 +191,14 @@ def process_pdb_file(file_path):
     for mer in adjacency_map.keys():
         distances_source, _ = dijkstra(adjacency_map, mer)
         all_distance_sums[mer] = distances_source
-        # Sum up reachable distances to see if this is the best source
         total_distance = sum(d for d in distances_source.values() if not math.isinf(d))
         if total_distance < min_total_distance:
             min_total_distance = total_distance
             best_source_mer = mer
 
-    # For the best source Mer, we also create a simpler dictionary
-    # that shows total_weight_sums from that best Mer
     distances_best = all_distance_sums[best_source_mer]
     total_weight_sums = {}
     for mer in distances_best:
         total_weight_sums[mer] = distances_best[mer]
 
-    # Create an enhanced PDB for every possible Mer as source
-    all_enhanced_pdbs = {}
-    for mer, dist_map in all_distance_sums.items():
-        enhanced_pdb = generate_enhanced_pdb(dist_map, mer, file_path, mers)
-        all_enhanced_pdbs[mer] = enhanced_pdb
-
-    return best_source_mer, mers, total_weight_sums, all_enhanced_pdbs, interactions, all_distance_sums
+    return best_source_mer, mers, total_weight_sums, interactions, all_distance_sums

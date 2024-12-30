@@ -47,9 +47,8 @@ class MainWindow(QMainWindow):
                 on_view_mer=go_to_protein_viewer
             ))
 
+        # This function is called when a Mer is selected for viewing
         def go_to_protein_viewer(mer_name, pdb_content, interactions, _unused):
-            # We ignore the old total_weight_sums passed here, because
-            # we want distances specifically from the selected mer_name
             def on_back():
                 go_to_mer_list(
                     self.current_best_mer,
