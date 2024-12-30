@@ -1,5 +1,3 @@
-# /Users/m3_air/24-25 fall/Bitirme/bito-pro-main/ui/protein_vispy_viewer_page.py
-
 import math
 import numpy as np
 from PySide6.QtWidgets import (
@@ -100,6 +98,8 @@ class ProteinVisPyViewerPage(QWidget):
         if scale > 0:
             positions /= scale
 
+        self.positions = positions  # Store for later use
+
         # Assign total weight sums to Mers
         weight_sums = np.array([self.total_weight_sums.get(name, 0.0) for name in self.mer_names])
 
@@ -112,7 +112,7 @@ class ProteinVisPyViewerPage(QWidget):
             normalized_weight = np.full_like(weight_sums, 0.5)
 
         # Map normalized weight sums to colors (low weight → red, high weight → blue)
-        cmap = get_colormap('coolwarm')  # Reversed 'coolwarm' colormap
+        cmap = get_colormap('coolwarm')
         colors = cmap.map(normalized_weight)
 
         # Set the color of the source mer to yellow
@@ -129,9 +129,10 @@ class ProteinVisPyViewerPage(QWidget):
         scatter = scene.visuals.Markers(parent=self.view.scene)
         scatter.set_data(positions, face_color=colors, size=10)
 
-        # Add labels for Mers
+        # Add labels for Mers with total weight sums
         for idx, name in enumerate(self.mer_names):
-            label_text = name
+            total_weight = self.total_weight_sums.get(name, 0.0)
+            label_text = f"{name} ({total_weight:.2f})"
             text = scene.visuals.Text(
                 text=label_text,
                 pos=positions[idx],
@@ -148,25 +149,12 @@ class ProteinVisPyViewerPage(QWidget):
         QApplication.processEvents()
 
         # Collect all weight values for bond coloring
-        weights = [interaction.weight for interaction in self.interactions]
-        weights = np.array(weights)
+        # Since bonds are to remain black, we'll set them to black with desired transparency
+        # Remove any color mapping for bonds
+        if len(self.interactions) > 0:
+            # Define black color with transparency (alpha)
+            bond_color = np.array([0, 0, 0, 0.5])  # RGBA: Black with 50% transparency
 
-        if len(weights) > 0:
-            # Normalize weights
-            min_weight_val = weights.min()
-            max_weight_val = weights.max()
-            if max_weight_val != min_weight_val:
-                normalized_weight_val = (weights - min_weight_val) / (max_weight_val - min_weight_val)
-            else:
-                normalized_weight_val = np.full_like(weights, 0.5)
-
-            # Choose a colormap for bonds
-            cmap_bonds = get_colormap('autumn')  # 'plasma' for high contrast
-
-            # Map normalized weight to colors
-            colors_bonds = ['black'] * len(normalized_weight_val)
-
-            # Create lines for bonds and add weight labels
             for idx, interaction in enumerate(self.interactions):
                 from_mer = interaction.from_mer  # string
                 to_mer = interaction.to_mer      # string
@@ -183,14 +171,11 @@ class ProteinVisPyViewerPage(QWidget):
                 pos1 = positions[i]
                 pos2 = positions[j]
 
-                # Get color for this bond
-                color = colors_bonds[idx]
-
-                # Create a line between the two Mers with weight-based color
+                # Create a line between the two Mers with black color and transparency
                 line = scene.visuals.Line(
                     pos=np.array([pos1, pos2]),
-                    color=color,
-                    width=0.5,
+                    color=bond_color,
+                    width=1.0,
                     connect='segments',
                     parent=self.view.scene
                 )
@@ -198,19 +183,27 @@ class ProteinVisPyViewerPage(QWidget):
                 # Compute midpoint for weight label
                 midpoint = (pos1 + pos2) / 2.0
 
+                # Calculate angle for label rotation (optional, as full 3D rotation isn't straightforward)
+                delta = pos2 - pos1
+                angle = math.degrees(math.atan2(delta[1], delta[0]))  # 2D projection
+
                 # Create a text label for weight
                 weight_text = f"{weight:.2f}"
                 text = scene.visuals.Text(
                     text=weight_text,
                     pos=midpoint,
                     color='black',  # Contrast with bond color
-                    font_size=4,    # Adjusted for readability
+                    font_size=8,    # Adjusted for readability
                     anchor_x='center',
                     anchor_y='center',
                     parent=self.view.scene
                 )
-                # Offset the label slightly above the bond
-                text.pos = (midpoint[0], midpoint[1], midpoint[2] + 0.02)
+                # Offset the label slightly perpendicular to the bond
+                offset = np.array([-delta[1], delta[0], 0.0]) * 0.05  # Perpendicular offset
+                text.pos = midpoint + offset
+
+                # Note: VisPy's Text visual doesn't support rotation in 3D space directly.
+                # This workaround adjusts the position to mimic parallel alignment.
 
         self.progress_bar.setValue(90)
         QApplication.processEvents()

@@ -1,5 +1,3 @@
-# /Users/m3_air/24-25 fall/Bitirme/bito-pro-main/models.py
-
 import math
 
 class Location:

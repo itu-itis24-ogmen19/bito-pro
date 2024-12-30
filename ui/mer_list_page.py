@@ -1,5 +1,3 @@
-# /Users/m3_air/24-25 fall/Bitirme/bito-pro-main/ui/mer_list_page.py
-
 import os
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QListWidget, 

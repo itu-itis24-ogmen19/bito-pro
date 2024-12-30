@@ -1,5 +1,3 @@
-# /Users/m3_air/24-25 fall/Bitirme/bito-pro-main/main.py
-
 import sys
 import numpy as np
 
