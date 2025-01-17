@@ -7,15 +7,16 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QFont
 
 from ui.resource_locate import resource_path
-
-
+from polmst import generate_enhanced_pdb  # Import the function for generating enhanced PDB content
 
 class MerListPage(QWidget):
-    def __init__(self, best_source_mer, download_data, processed_files, on_back, on_view_mer):
+    def __init__(self, best_source_mer, download_data, processed_files, interactions, total_weight_sums, on_back, on_view_mer):
         super().__init__()
         self.best_source_mer = best_source_mer
-        self.download_data = download_data
+        self.download_data = download_data  # Kept for compatibility
         self.processed_files = processed_files
+        self.interactions = interactions
+        self.total_weight_sums = total_weight_sums
         self.on_back = on_back
         self.on_view_mer = on_view_mer
 
@@ -68,6 +69,7 @@ class MerListPage(QWidget):
         self.populate_mer_table(self.best_source_mer, self.download_data)
 
     def populate_mer_table(self, best_source_mer, download_data):
+        # Retain the same structure, though we won't use 'download_data' for PDB text
         self.download_data = download_data
         self.best_source_mer = best_source_mer
 
@@ -100,17 +102,48 @@ class MerListPage(QWidget):
         self.status_label.setText(f"Loaded {len(mer_names)} Mers.")
 
     def view_mer(self, mer_name):
-        pdb_content = self.download_data.get(mer_name, "")
+        """
+        On-demand generation of PDB content for 'mer_name' using the stored processed file data.
+        1) Find the matching ProcessedFile
+        2) Generate an enhanced PDB using the distance map for that mer_name
+        3) Call on_view_mer with the new content
+        """
+        pf = self.find_processed_file()
+        if not pf:
+            self.status_label.setText("No PDB data found.")
+            return
+
+        if mer_name in pf.all_distance_sums:
+            dist_map = pf.all_distance_sums[mer_name]
+            pdb_content = generate_enhanced_pdb(dist_map, mer_name, pf.file_path, pf.mers)
+        else:
+            pdb_content = ""
+
         if not pdb_content:
             self.status_label.setText(f"No PDB data found for {mer_name}.")
             return
+
         self.status_label.setText(f"Viewing Mer '{mer_name}'...")
-        self.on_view_mer(mer_name, pdb_content)
+        # Pass the generated PDB to the viewer
+        self.on_view_mer(mer_name, pdb_content, pf.interactions, pf.total_weight_sums)
 
     def download_pdb(self, mer_name):
-        pdb_content = self.download_data.get(mer_name, "")
-        if not pdb_content:
+        """
+        On-demand generation of a single PDB file for the chosen mer_name.
+        """
+        pf = self.find_processed_file()
+        if not pf:
+            self.status_label.setText("No PDB data found.")
+            return
+
+        if mer_name not in pf.all_distance_sums:
             self.status_label.setText(f"No PDB data found for {mer_name}.")
+            return
+
+        dist_map = pf.all_distance_sums[mer_name]
+        pdb_content = generate_enhanced_pdb(dist_map, mer_name, pf.file_path, pf.mers)
+        if not pdb_content:
+            self.status_label.setText(f"No PDB data generated for {mer_name}.")
             return
 
         save_path, _ = QFileDialog.getSaveFileName(self, "Save PDB File", f"{mer_name}.pdb", "PDB Files (*.pdb)")
@@ -120,11 +153,23 @@ class MerListPage(QWidget):
             self.status_label.setText(f"{mer_name}.pdb saved successfully.")
 
     def load_previous_result(self, item):
+        # Find the corresponding processed file based on the text
         selected_text = item.text()
         for pf in self.processed_files:
             entry_str = f"{pf.file_name} - {pf.timestamp}"
             if entry_str == selected_text:
                 self.status_label.setText(f"Loading previous result for '{pf.file_name}'...")
                 self.populate_mer_table(pf.best_source_mer, pf.download_data)
+                self.on_mer_list(pf.best_source_mer, pf.download_data, self.processed_files, pf.interactions, pf.total_weight_sums)
                 return
         self.status_label.setText("Could not find the selected previous result.")
+
+    def find_processed_file(self):
+        """
+        Return the last processed file or one that matches the current 'best_source_mer' 
+        for convenience. Adjust logic as needed if you have multiple candidates.
+        """
+        for pf in self.processed_files:
+            if pf.best_source_mer == self.best_source_mer:
+                return pf
+        return None

@@ -7,86 +7,72 @@ class Location:
         self.z = z
 
     def distance_to(self, other):
-        dx = self.x - other.x
-        dy = self.y - other.y
-        dz = self.z - other.z
-        return (dx * dx + dy * dy + dz * dz) ** 0.5
+        return math.sqrt(
+            (self.x - other.x) ** 2 +
+            (self.y - other.y) ** 2 +
+            (self.z - other.z) ** 2
+        )
 
 class Atom:
-    def __init__(self, atom_id, name, atom_type, charge, location, temp_factor, mer=None):
+    def __init__(self, atom_id, name, residue_name, element, location, temp_factor, mer):
         self.atom_id = atom_id
         self.name = name
-        self.type = atom_type
-        self.charge = charge
+        self.residue_name = residue_name
+        self.element = element
         self.location = location
         self.temp_factor = temp_factor
-        self.mer = mer
+        self.mer = mer  # Mer object
 
 class Mer:
-    def __init__(self, name, mer_type, mer_id, chain):
+    def __init__(self, name, residue_name, residue_number, chain):
         self.name = name
-        self.type = mer_type
-        self.mer_id = mer_id
+        self.residue_name = residue_name
+        self.residue_number = residue_number
         self.chain = chain
         self.atoms = []
-        self.bond_count = {}  # Mer -> int
-        self.center_of_mass = Location(0,0,0)
+        self.bond_count = {}  # dict of mer_name: bond_count
+        self.center_of_mass = None
 
     def add_atom(self, atom):
         self.atoms.append(atom)
-        atom.mer = self
 
     def calc_com(self):
         if not self.atoms:
-            self.center_of_mass = Location(0,0,0)
+            self.center_of_mass = None
             return
-        x = sum(a.location.x for a in self.atoms)
-        y = sum(a.location.y for a in self.atoms)
-        z = sum(a.location.z for a in self.atoms)
-        count = len(self.atoms)
-        self.center_of_mass = Location(x/count, y/count, z/count)
+        x = sum(atom.location.x for atom in self.atoms) / len(self.atoms)
+        y = sum(atom.location.y for atom in self.atoms) / len(self.atoms)
+        z = sum(atom.location.z for atom in self.atoms) / len(self.atoms)
+        self.center_of_mass = Location(x, y, z)
 
-    def add_bond(self, other):
-        self.bond_count[other] = self.bond_count.get(other, 0) + 1
+    def add_bond(self, other_mer):
+        if other_mer.name in self.bond_count:
+            self.bond_count[other_mer.name] += 1
+        else:
+            self.bond_count[other_mer.name] = 1
 
-    def is_bonded_to(self, other, threshold=4.0):
-        # Check distance between any atom pairs
-        bonded = False
-        for a1 in self.atoms:
-            for a2 in other.atoms:
-                dist = math.sqrt((a1.location.x - a2.location.x)**2 + 
-                                 (a1.location.y - a2.location.y)**2 +
-                                 (a1.location.z - a2.location.z)**2)
-                if dist <= threshold:
-                    self.add_bond(other)
-                    other.add_bond(self)
-                    bonded = True
-                    break
-            if bonded:
-                break
-        return bonded
+    def is_bonded_to(self, other_mer):
+        return other_mer.name in self.bond_count and self.bond_count[other_mer.name] > 0
 
-    def get_bond_count_with(self, other):
-        return self.bond_count.get(other, 0)
-
-    def __eq__(self, other):
-        if not isinstance(other, Mer):
-            return False
-        return self.name == other.name
-
-    def __hash__(self):
-        return hash(self.name)
-
+    def get_bond_count_with(self, other_mer):
+        return self.bond_count.get(other_mer.name, 0)
 
 class Interaction:
     def __init__(self, from_mer, to_mer):
-        self.from_mer = from_mer.name
-        self.to_mer = to_mer.name
+        """
+        Interaction between two Mers, storing their names and the calculated weight.
+        Weight is the primary metric used for all calculations and visualizations.
+        """
+        self.from_mer = from_mer.name  # string
+        self.to_mer = to_mer.name      # string
         bond_count = from_mer.get_bond_count_with(to_mer)
         # Avoid division by zero
         from_size = len(from_mer.atoms) or 1
         to_size = len(to_mer.atoms) or 1
-        self.affinity = bond_count / math.sqrt(from_size * to_size)
+        if bond_count > 0:
+            self.weight = 1.0 / (bond_count / math.sqrt(from_size * to_size))  # weight = 1 / affinity
+        else:
+            self.weight = math.inf  # Represents no interaction
 
     def __str__(self):
-        return f"{self.from_mer} --[{self.affinity}]--> {self.to_mer}"
+        return f"{self.from_mer} --[{self.weight:.2f}]--> {self.to_mer}"

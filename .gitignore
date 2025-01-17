@@ -1,0 +1,6 @@
+*.pdb
+*.DS_Store
+/__pycache__/
+/ui/__pycache__/
+outputs
+pdbs
