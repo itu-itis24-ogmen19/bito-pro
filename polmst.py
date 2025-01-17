@@ -99,7 +99,7 @@ def build_adjacency_map(mers):
                 adjacency_map[to_mer_obj.name][from_mer.name] = weight
 
     # Remove Mers with no connections
-    #adjacency_map = {m: adj for m, adj in adjacency_map.items() if adj}
+    adjacency_map = {m: adj for m, adj in adjacency_map.items() if adj}
     return adjacency_map
 
 def dijkstra(adjacency_map, source_mer):

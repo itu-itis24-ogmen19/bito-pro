@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow
 from ui.welcome_page import WelcomePage
 from ui.file_upload_page import FileUploadPage
 from ui.mer_list_page import MerListPage
-from ui.protein_vispy_viewer_page import ProteinVisPyViewerPage
+from ui.protein_viewer_page import ProteinViewerPage
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -66,7 +66,7 @@ class MainWindow(QMainWindow):
                 distance_map_for_selected_mer = {}
 
             self.setCentralWidget(
-                ProteinVisPyViewerPage(
+                ProteinViewerPage(
                     mer_name=mer_name,
                     pdb_content=pdb_content,
                     interactions=interactions,
@@ -74,7 +74,6 @@ class MainWindow(QMainWindow):
                     on_back=on_back
                 )
             )
-
         go_to_welcome()
 
 def main():

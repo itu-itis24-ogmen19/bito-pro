@@ -41,7 +41,7 @@ def get_coolwarm_color(value):
         return color_lerp(mid_color, warm_color, scale)
 
 
-class ProteinVisPyViewerPage(QWidget):
+class ProteinViewerPage(QWidget):
     def __init__(self, mer_name, pdb_content, interactions, total_weight_sums, on_back):
         super().__init__()
         self.mer_name = mer_name
