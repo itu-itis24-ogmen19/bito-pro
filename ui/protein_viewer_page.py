@@ -56,7 +56,8 @@ class ProteinViewerPage(QWidget):
     ProteinViewerPage now supports:
       - Two display modes ("Global Distance" vs. "Local Edge-Sum").
       - Distance-based label hiding when camera zooms out.
-      - Locating a particular node via a drop-down + "Locate Node" button.
+      - Locating a particular node (Locate Node) via a drop-down with full-length names.
+      - "Show Node Info" to display selected node's value and connections in a popup.
       - Black edges and gray edge-value text.
     """
     def __init__(self, mer_name, pdb_content, interactions, total_weight_sums, on_back):
@@ -67,60 +68,60 @@ class ProteinViewerPage(QWidget):
         self.total_weight_sums = total_weight_sums  # Distances from the best source
         self.on_back = on_back
 
+        # Data structures
         self.mers = {}
         self.positions = None
         self.mer_names = []
-
-        # Store a dictionary for "edge sum" values
         self.edge_sum_by_node = {}
 
-        # Current mode can be 'distance' or 'edge_sum'
+        # Which display mode? 'distance' or 'edge_sum'
         self.display_mode = 'distance'
 
-        # We'll keep references to label actors so we can hide/show them dynamically
+        # Label actors for dynamic hiding
         self.node_text_actors = []
         self.edge_text_actors = []
 
-        # Thresholds for distance-based label hiding:
+        # Distance thresholds for hiding labels
         self.node_label_hide_dist = 3.0
         self.edge_label_hide_dist = 3.0
 
         # --- Main layout ---
         self.main_layout = QVBoxLayout(self)
 
-        # --- Top Bar ---
+        # =========================
+        # Top Bar
+        # =========================
         top_bar = QHBoxLayout()
 
-        # Back button
         back_btn = QPushButton("Back")
         back_btn.clicked.connect(self.on_back)
         top_bar.addWidget(back_btn, alignment=Qt.AlignLeft)
 
-        # Current mode label
         self.mode_label = QLabel("Current Mode: Global Distance")
         self.mode_label.setFont(QFont("Arial", 11, QFont.Bold))
         top_bar.addWidget(self.mode_label, alignment=Qt.AlignCenter)
 
-        # Info button
         info_btn = QPushButton("Info")
-        info_btn.setToolTip("Learn about the display modes and visualization details.")
+        info_btn.setToolTip("Learn about the display modes and other features.")
         info_btn.clicked.connect(self.show_info)
         top_bar.addWidget(info_btn, alignment=Qt.AlignRight)
 
-        # Global Distance Mode button
         self.distance_btn = QPushButton("Global Distance Mode")
         self.distance_btn.clicked.connect(self.set_distance_mode)
         self.distance_btn.setToolTip("Node values = total distance from the best source Mer.")
         top_bar.addWidget(self.distance_btn, alignment=Qt.AlignRight)
 
-        # Local Edge-Sum Mode button
         self.edge_sum_btn = QPushButton("Local Edge-Sum Mode")
         self.edge_sum_btn.clicked.connect(self.set_edge_sum_mode)
         self.edge_sum_btn.setToolTip("Node values = sum of connected edges' weights.")
         top_bar.addWidget(self.edge_sum_btn, alignment=Qt.AlignRight)
 
-        # --- Node Locator: drop-down + button ---
+        # **Node selection**: For full-length names, we set size policy
         self.node_select_combobox = QComboBox()
+        # Ensure no truncation:
+        self.node_select_combobox.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        # Give it enough space so we see the full name:
+        self.node_select_combobox.setMinimumWidth(350)
         self.node_select_combobox.setEnabled(False)
         top_bar.addWidget(self.node_select_combobox)
 
@@ -129,10 +130,18 @@ class ProteinViewerPage(QWidget):
         self.locate_btn.clicked.connect(self.locate_selected_node)
         top_bar.addWidget(self.locate_btn, alignment=Qt.AlignRight)
 
+        # **Show Node Info** button
+        self.info_node_btn = QPushButton("Show Node Info")
+        self.info_node_btn.setEnabled(False)
+        self.info_node_btn.clicked.connect(self.show_node_info)
+        top_bar.addWidget(self.info_node_btn, alignment=Qt.AlignRight)
+
         top_bar.addStretch()
         self.main_layout.addLayout(top_bar)
 
-        # --- Progress Label + Bar ---
+        # =========================
+        # Progress Label + Bar
+        # =========================
         self.progress_label = QLabel("Processing graph...")
         self.progress_label.setAlignment(Qt.AlignCenter)
         self.progress_label.setFont(QFont("Arial", 14, QFont.Bold))
@@ -143,7 +152,9 @@ class ProteinViewerPage(QWidget):
         self.progress_bar.setValue(0)
         self.main_layout.addWidget(self.progress_bar, alignment=Qt.AlignCenter)
 
-        # --- Loading Image ---
+        # =========================
+        # Loading Image
+        # =========================
         loading_image_path = resource_path(os.path.join("assets", "images", "protein.png"))
         self.loading_label = QLabel()
         if os.path.exists(loading_image_path):
@@ -155,10 +166,12 @@ class ProteinViewerPage(QWidget):
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.main_layout.addWidget(self.loading_label, alignment=Qt.AlignCenter)
 
-        # --- VTK Setup ---
+        # =========================
+        # VTK Setup
+        # =========================
         self.vtk_widget = QVTKRenderWindowInteractor(self)
         self.renderer = vtk.vtkRenderer()
-        self.renderer.SetBackground(1.0, 1.0, 1.0)  # White background
+        self.renderer.SetBackground(1.0, 1.0, 1.0)
         self.vtk_widget.GetRenderWindow().AddRenderer(self.renderer)
         self.interactor = self.vtk_widget.GetRenderWindow().GetInteractor()
 
@@ -167,15 +180,20 @@ class ProteinViewerPage(QWidget):
 
         self.vtk_widget.hide()  # hidden until data is drawn
 
-        # Schedule parsing and drawing after a short delay
+        # Kick off the process
         QTimer.singleShot(100, self.parse_and_draw)
 
         self.setLayout(self.main_layout)
 
+    # ----------------------------------------------------------------
+    # Info / Help
+    # ----------------------------------------------------------------
     def show_info(self):
-        """ Show a popup describing the two modes and label-hiding logic. """
+        """
+        Show a popup describing the two modes, distance-based hiding, node-locating, etc.
+        """
         info_text = (
-            "This 3D viewer supports two display modes:\n\n"
+            "This 3D viewer supports two different ways of labeling each Mer (node):\n\n"
             "1) Global Distance Mode:\n"
             "   Each node's value is the total distance (or weight) from the best source Mer.\n\n"
             "2) Local Edge-Sum Mode:\n"
@@ -183,10 +201,15 @@ class ProteinViewerPage(QWidget):
             "DISTANCE-BASED LABEL HIDING:\n"
             "   Labels automatically hide when you zoom out, and show when you zoom in.\n\n"
             "LOCATE NODE:\n"
-            "   Choose a node from the drop-down and click 'Locate Node' to center on it."
+            "   Pick a node from the drop-down, then click 'Locate Node' to center the camera.\n\n"
+            "SHOW NODE INFO:\n"
+            "   Displays the selected node's current value and all connections (edges)."
         )
-        QMessageBox.information(self, "Display Modes", info_text)
+        QMessageBox.information(self, "Display Modes & Features", info_text)
 
+    # ----------------------------------------------------------------
+    # Set Display Modes
+    # ----------------------------------------------------------------
     def set_distance_mode(self):
         """Switch to 'distance' display mode."""
         self.display_mode = 'distance'
@@ -199,8 +222,11 @@ class ProteinViewerPage(QWidget):
         self.mode_label.setText("Current Mode: Local Edge-Sum")
         self.redraw_scene()
 
+    # ----------------------------------------------------------------
+    # Parse PDB / Construct Graph
+    # ----------------------------------------------------------------
     def parse_and_draw(self):
-        """Parses PDB content, initializes node data, draws the scene."""
+        """Load PDB, build node data structures, then draw the scene."""
         self.progress_bar.setValue(10)
         QApplication.processEvents()
 
@@ -210,7 +236,7 @@ class ProteinViewerPage(QWidget):
         self.progress_bar.setValue(30)
         QApplication.processEvents()
 
-        if not self.mers:
+        if not self.mer_names:
             self.progress_label.setText("No Mers found.")
             self.progress_bar.setValue(100)
             return
@@ -223,7 +249,7 @@ class ProteinViewerPage(QWidget):
             positions /= scale
         self.positions = positions
 
-        # Edge sums
+        # Build edge sums
         self.edge_sum_by_node = {}
         for name in self.mer_names:
             self.edge_sum_by_node[name] = 0.0
@@ -237,34 +263,37 @@ class ProteinViewerPage(QWidget):
             if to_mer in self.edge_sum_by_node:
                 self.edge_sum_by_node[to_mer] += weight
 
-        # Populate the combo box for "Locate Node" now that we know mer_names
+        # Populate combo box
         self.node_select_combobox.clear()
         for n in self.mer_names:
             self.node_select_combobox.addItem(n)
         self.node_select_combobox.setEnabled(True)
         self.locate_btn.setEnabled(True)
+        self.info_node_btn.setEnabled(True)
 
         self.draw_graph()
 
     def redraw_scene(self):
-        """Remove existing visuals, then re-draw."""
+        """Clear and re-draw the 3D scene according to current mode."""
         self.renderer.RemoveAllViewProps()
         self.node_text_actors.clear()
         self.edge_text_actors.clear()
         self.draw_graph()
 
+    # ----------------------------------------------------------------
+    # Drawing the 3D Scene
+    # ----------------------------------------------------------------
     def draw_graph(self):
-        """Build and display the 3D scene based on current display mode."""
+        """Create vtk actors for nodes/edges/labels based on the selected mode."""
         self.progress_bar.setValue(50)
         QApplication.processEvents()
 
-        # Determine node values
+        # Node values
         if self.display_mode == 'distance':
             node_values = [self.total_weight_sums.get(name, 0.0) for name in self.mer_names]
-        else:  # 'edge_sum'
+        else:
             node_values = [self.edge_sum_by_node.get(name, 0.0) for name in self.mer_names]
 
-        # Normalize for color mapping
         min_val = min(node_values) if node_values else 0.0
         max_val = max(node_values) if node_values else 1.0
         if abs(max_val - min_val) < 1e-12:
@@ -272,21 +301,21 @@ class ProteinViewerPage(QWidget):
         else:
             normalized_vals = [(val - min_val)/(max_val - min_val) for val in node_values]
 
-        # Convert normalized values to colors
+        # Convert to color
         colors_rgba = []
         for val in normalized_vals:
             r, g, b = get_coolwarm_color(val)
             a = 1.0
             colors_rgba.append([r, g, b, a])
 
-        # Highlight best-source node as yellow
+        # Highlight best-source node
         try:
             source_index = self.mer_names.index(self.mer_name)
             colors_rgba[source_index] = [1.0, 1.0, 0.0, 1.0]
         except ValueError:
             pass
 
-        # Create vtkPolyData for node positions
+        # Build vtkPolyData for positions
         vtk_points = vtk.vtkPoints()
         vtk_colors = vtk.vtkUnsignedCharArray()
         vtk_colors.SetNumberOfComponents(3)
@@ -300,7 +329,7 @@ class ProteinViewerPage(QWidget):
         polydata.SetPoints(vtk_points)
         polydata.GetPointData().SetScalars(vtk_colors)
 
-        # Sphere glyphs
+        # Node glyphs
         sphere_source = vtk.vtkSphereSource()
         sphere_source.SetRadius(0.02)
 
@@ -319,8 +348,8 @@ class ProteinViewerPage(QWidget):
         self.progress_bar.setValue(70)
         QApplication.processEvents()
 
-        
-        bond_color = [0.3, 0.3, 0.3]
+        # Edges
+        bond_color = [0.3, 0.3, 0.3]  
         line_polydata = vtk.vtkPolyData()
         line_points = vtk.vtkPoints()
         lines = vtk.vtkCellArray()
@@ -389,7 +418,7 @@ class ProteinViewerPage(QWidget):
                 self.positions[idx][2] + 0.04
             )
             text_actor.SetCamera(self.renderer.GetActiveCamera())
-            text_actor.GetProperty().SetColor(0.0, 0.0, 0.0)  # black text
+            text_actor.GetProperty().SetColor(0.0, 0.0, 0.0)
             self.renderer.AddActor(text_actor)
 
             self.node_text_actors.append(text_actor)
@@ -411,11 +440,12 @@ class ProteinViewerPage(QWidget):
             text_actor.SetScale(0.005, 0.005, 0.005)
             text_actor.SetPosition(midpoint[0], midpoint[1], midpoint[2])
             text_actor.SetCamera(self.renderer.GetActiveCamera())
-            text_actor.GetProperty().SetColor(0.5, 0.5, 0.5)  # gray text
+            text_actor.GetProperty().SetColor(0.5, 0.5, 0.5)
             self.renderer.AddActor(text_actor)
 
             self.edge_text_actors.append(text_actor)
 
+        # Reset camera + attach observer for label hiding
         self.renderer.ResetCamera()
         camera = self.renderer.GetActiveCamera()
         camera.RemoveAllObservers()
@@ -425,11 +455,10 @@ class ProteinViewerPage(QWidget):
         self.progress_label.setText("Processing complete!")
         QApplication.processEvents()
 
-        # Hide loading image and progress bar after short delay, show the VTK widget
         QTimer.singleShot(500, self.show_graph)
 
     def show_graph(self):
-        """Hide loading UI, show the 3D scene."""
+        """Hide the loading UI and show the VTK widget."""
         self.progress_label.hide()
         self.progress_bar.hide()
         self.loading_label.hide()
@@ -440,8 +469,11 @@ class ProteinViewerPage(QWidget):
         self.interactor.Initialize()
         self.interactor.Start()
 
+    # ----------------------------------------------------------------
+    # Label Hiding Callback
+    # ----------------------------------------------------------------
     def on_camera_modified(self, caller, event):
-        """Hide or show labels based on how far the camera is from (0,0,0)."""
+        """Hide or show labels based on camera distance from (0,0,0)."""
         camera = self.renderer.GetActiveCamera()
         cx, cy, cz = camera.GetPosition()
         dist = math.sqrt(cx**2 + cy**2 + cz**2)
@@ -464,9 +496,12 @@ class ProteinViewerPage(QWidget):
 
         self.vtk_widget.GetRenderWindow().Render()
 
+    # ----------------------------------------------------------------
+    # Locate Node
+    # ----------------------------------------------------------------
     def locate_selected_node(self):
         """
-        Center and zoom on the chosen node from the combo box.
+        Center and zoom the camera on the selected node in the combo box.
         """
         node_name = self.node_select_combobox.currentText()
         if node_name not in self.mer_names:
@@ -479,18 +514,68 @@ class ProteinViewerPage(QWidget):
         # Make 'pos' the new focal point
         camera.SetFocalPoint(pos[0], pos[1], pos[2])
 
-        # Position the camera so that we're looking at 'pos' from some offset in Z
-        offset_distance = 0.3  # Adjust to zoom in/out more
+        # Some offset to zoom in from above
+        offset_distance = 0.3
         camera.SetPosition(pos[0], pos[1] - 0.1, pos[2] + offset_distance)
         camera.SetViewUp(0, 1, 0)
         self.renderer.ResetCameraClippingRange()
 
         self.vtk_widget.GetRenderWindow().Render()
 
+    # ----------------------------------------------------------------
+    # Show Node Info
+    # ----------------------------------------------------------------
+    def show_node_info(self):
+        """
+        Displays a popup with the selected node's:
+          - Current mode value
+          - All connections (edges) with their weights
+        """
+        node_name = self.node_select_combobox.currentText()
+        if node_name not in self.mer_names:
+            return
+
+        # Gather node's current mode value
+        if self.display_mode == 'distance':
+            node_value = self.total_weight_sums.get(node_name, 0.0)
+            mode_str = "Global Distance"
+        else:
+            node_value = self.edge_sum_by_node.get(node_name, 0.0)
+            mode_str = "Local Edge-Sum"
+
+        # Gather all connections: from self.interactions
+        # i.e. if from_mer == node_name or to_mer == node_name
+        connections = []
+        for inter in self.interactions:
+            if inter.from_mer == node_name:
+                connections.append((inter.to_mer, inter.weight))
+            elif inter.to_mer == node_name:
+                connections.append((inter.from_mer, inter.weight))
+
+        # Build a string
+        info_str = []
+        info_str.append(f"Node: {node_name}")
+        info_str.append(f"Current Mode: {mode_str}")
+        info_str.append(f"Node Value: {node_value:.3f}\n")
+
+        if connections:
+            info_str.append("Connections:")
+            for (other, w) in connections:
+                info_str.append(f"  • {node_name} <--> {other}, weight={w:.3f}")
+        else:
+            info_str.append("(No connections found)")
+
+        full_text = "\n".join(info_str)
+
+        QMessageBox.information(self, "Node Info", full_text)
+
+    # ----------------------------------------------------------------
+    # PDB Parsing
+    # ----------------------------------------------------------------
     def parse_pdb_content(self, pdb_content):
         """
-        Simple parse of PDB lines to extract a single (x,y,z) position per Mer name,
-        effectively using the first encountered atom of each residue as that Mer's position.
+        Return a dict of MerName -> {position: (x,y,z), bond_count: 0}, etc.
+        We use the first encountered line for each mer as the position.
         """
         mers = {}
         lines = pdb_content.split('\n')
@@ -505,8 +590,8 @@ class ProteinViewerPage(QWidget):
                     x = float(line[30:38].strip())
                     y = float(line[38:46].strip())
                     z = float(line[46:54].strip())
+                    # If we haven't yet assigned a position for this mer_name, do so
                     if mer_name not in mers:
-                        # Use the first encountered atom as the Mer center
                         mers[mer_name] = {
                             'position': (x, y, z),
                             'bond_count': 0
