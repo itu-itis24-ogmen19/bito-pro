@@ -1,11 +1,12 @@
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, QHBoxLayout, QListWidget
+    QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog,
+    QHBoxLayout, QListWidget, QSpacerItem, QSizePolicy, QProgressBar
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 import datetime
 import os
 
-from polmst import process_pdb_file
+from polmst import process_pdb_file  # Assuming this is a blocking call
 
 class ProcessedFile:
     def __init__(
@@ -20,20 +21,7 @@ class ProcessedFile:
         timestamp,
         all_distance_sums
     ):
-        """
-        Represents a processed PDB file with all relevant data.
-
-        Parameters:
-            file_name (str): The name of the PDB file.
-            file_path (str): Full path of the PDB file (used for on-demand PDB generation).
-            best_source_mer (str): The name of the best source Mer.
-            mers (dict): Dictionary of Mer objects from parsing.
-            download_data (dict): Mapping of Mer names to their enhanced PDB content (or None here).
-            interactions (list): List of Interaction objects.
-            total_weight_sums (dict): Mapping of Mer names to their distances from the best source.
-            timestamp (datetime): When the file was processed.
-            all_distance_sums (dict): Mer -> (dict of distances to all other Mers).
-        """
+        # [Initialization remains unchanged]
         self.file_name = file_name
         self.file_path = file_path
         self.best_source_mer = best_source_mer
@@ -44,6 +32,27 @@ class ProcessedFile:
         self.timestamp = timestamp
         self.all_distance_sums = all_distance_sums
 
+class WorkerThread(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, file_path):
+        super().__init__()
+        self.file_path = file_path
+
+    def run(self):
+        try:
+            best_source_mer, mers, total_weight_sums, interactions, all_distance_sums = process_pdb_file(self.file_path)
+            self.finished.emit({
+                'best_source_mer': best_source_mer,
+                'mers': mers,
+                'total_weight_sums': total_weight_sums,
+                'interactions': interactions,
+                'all_distance_sums': all_distance_sums
+            })
+        except Exception as e:
+            self.error.emit(str(e))
+
 class FileUploadPage(QWidget):
     def __init__(self, on_back, on_mer_list, processed_files):
         super().__init__()
@@ -52,55 +61,163 @@ class FileUploadPage(QWidget):
         self.processed_files = processed_files
 
         self.selected_file = None
-        
+        self.worker = None
+
+        self.init_ui()
+
+    def init_ui(self):
         main_layout = QHBoxLayout(self)
-        
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(20)
+
         # Sidebar for previous processes
         sidebar = QVBoxLayout()
         sidebar_label = QLabel("Previous Processes")
+        sidebar_label.setStyleSheet("font-weight: bold; font-size: 16px;")
         sidebar.addWidget(sidebar_label)
+
         self.file_list = QListWidget()
+        self.file_list.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                background-color: #2C2F33;
+                color: white;
+            }
+            QListWidget::item {
+                padding: 10px;
+            }
+            QListWidget::item:selected {
+                background-color: #7289DA;
+                color: white;
+            }
+        """)
         sidebar.addWidget(self.file_list)
+
         main_layout.addLayout(sidebar, 1)
-        
-        # Double-click on a previous result
-        self.file_list.itemDoubleClicked.connect(self.open_previous_result)
-        
+
         # Main area
         main_area = QVBoxLayout()
 
         # Top bar with a Back button
         top_bar = QHBoxLayout()
         self.back_btn = QPushButton("Back")
+        # Removed custom stylesheet to revert to original styling
+        # self.back_btn.setStyleSheet("""
+        #     QPushButton {
+        #         background-color: #23272A;
+        #         color: white;
+        #         padding: 10px 20px;
+        #         border: none;
+        #         border-radius: 5px;
+        #         font-size: 14px;
+        #     }
+        #     QPushButton:hover {
+        #         background-color: #2C2F33;
+        #     }
+        #     QPushButton:disabled {
+        #         background-color: #555555;
+        #     }
+        # """)
         self.back_btn.clicked.connect(self.on_back)
         top_bar.addWidget(self.back_btn, alignment=Qt.AlignLeft)
         top_bar.addStretch()
         main_area.addLayout(top_bar)
 
+        # Spacer
+        main_area.addSpacerItem(QSpacerItem(20, 20, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
+        # Status Label
         self.status_label = QLabel("No file selected")
-        self.status_label.setStyleSheet("color: #888;")
+        self.status_label.setStyleSheet("color: #CCCCCC; font-size: 14px;")
         self.status_label.setAlignment(Qt.AlignCenter)
         main_area.addWidget(self.status_label)
 
+        # Spacer
+        main_area.addSpacerItem(QSpacerItem(20, 20, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
+        # Select File Button
         self.select_btn = QPushButton("Select File")
+        self.select_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #23272A;
+                color: white;
+                padding: 10px 30px;
+                border: 2px solid #7289DA;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #2C2F33;
+            }
+            QPushButton:disabled {
+                background-color: #555555;
+                border: 2px solid #888888;
+            }
+        """)
         self.select_btn.clicked.connect(self.pick_file)
         self.select_btn.setToolTip("Select a PDB file for processing.")
         main_area.addWidget(self.select_btn, alignment=Qt.AlignCenter)
 
+        # Process File Button
         self.process_btn = QPushButton("Process File")
+        self.process_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #23272A;
+                color: white;
+                padding: 10px 30px;
+                border: 2px solid #7289DA;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #2C2F33;
+            }
+            QPushButton:disabled {
+                background-color: #555555;
+                border: 2px solid #888888;
+            }
+        """)
         self.process_btn.clicked.connect(self.process_file)
         self.process_btn.setToolTip("Run the analysis on the selected PDB file.")
         self.process_btn.setEnabled(False)
         main_area.addWidget(self.process_btn, alignment=Qt.AlignCenter)
-        
+
+        # Progress Bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setFixedHeight(20)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                text-align: center;
+                background-color: #2C2F33;
+                color: white;
+            }
+            QProgressBar::chunk {
+                background-color: #7289DA;
+                width: 20px;
+            }
+        """)
+        main_area.addWidget(self.progress_bar)
+
+        # Spacer
+        main_area.addSpacerItem(QSpacerItem(20, 20, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
         main_layout.addLayout(main_area, 3)
 
         # Populate sidebar with previously processed files
         for pf in self.processed_files:
-            self.file_list.addItem(f"{pf.file_name} - {pf.timestamp}")
+            self.file_list.addItem(f"{pf.file_name} - {pf.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # Connect list double-click
+        self.file_list.itemDoubleClicked.connect(self.open_previous_result)
 
     def pick_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select PDB File", "", "PDB Files (*.pdb)")
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select PDB File", "", "PDB Files (*.pdb)"
+        )
         if file_path:
             self.selected_file = file_path
             self.status_label.setText(f"Selected File: {os.path.basename(file_path)}")
@@ -114,51 +231,72 @@ class FileUploadPage(QWidget):
             self.status_label.setText("No file selected. Please choose a PDB file first.")
             return
 
-        self.status_label.setText("Processing file, please wait...")
+        # Update UI to indicate processing
+        self.status_label.setText(
+            "PDB file is being processed, it may take a couple of minutes depending on the size of the file."
+        )
         self.select_btn.setEnabled(False)
         self.process_btn.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)  # Indeterminate progress
 
-        try:
-            best_source_mer, mers, total_weight_sums, interactions, all_distance_sums = process_pdb_file(self.selected_file)
-        except Exception as e:
-            self.status_label.setText(f"Error processing file: {str(e)}")
-            self.select_btn.setEnabled(True)
-            self.process_btn.setEnabled(True)
-            return
+        # Start processing in a separate thread
+        self.worker = WorkerThread(self.selected_file)
+        self.worker.finished.connect(self.on_processing_finished)
+        self.worker.error.connect(self.on_processing_error)
+        self.worker.start()
 
-        download_data = {mer_name: None for mer_name in mers.keys()}
+    def on_processing_finished(self, result):
+        # Stop the progress bar
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setRange(0, 100)
 
-        processed = ProcessedFile(
-            file_name=os.path.basename(self.selected_file),
-            file_path=self.selected_file,
-            best_source_mer=best_source_mer,
-            mers=mers,
-            download_data=download_data,
-            interactions=interactions,
-            total_weight_sums=total_weight_sums,
-            timestamp=datetime.datetime.now(),
-            all_distance_sums=all_distance_sums
-        )
-        self.processed_files.append(processed)
-        self.file_list.addItem(f"{processed.file_name} - {processed.timestamp}")
-
-        self.status_label.setText(f"Processing completed for '{processed.file_name}'!")
+        # Re-enable buttons
         self.select_btn.setEnabled(True)
         self.process_btn.setEnabled(True)
 
+        # Create ProcessedFile instance
+        processed = ProcessedFile(
+            file_name=os.path.basename(self.selected_file),
+            file_path=self.selected_file,
+            best_source_mer=result['best_source_mer'],
+            mers=result['mers'],
+            download_data={mer_name: None for mer_name in result['mers'].keys()},
+            interactions=result['interactions'],
+            total_weight_sums=result['total_weight_sums'],
+            timestamp=datetime.datetime.now(),
+            all_distance_sums=result['all_distance_sums']
+        )
+        self.processed_files.append(processed)
+        self.file_list.addItem(f"{processed.file_name} - {processed.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        self.status_label.setText(f"Processing completed for '{processed.file_name}'!")
+
+        # Proceed to the next step
         self.on_mer_list(
-            best_source_mer,
+            processed.best_source_mer,
             processed.download_data,  # now has keys == all mer names
             self.processed_files,
-            interactions,
-            total_weight_sums,
+            processed.interactions,
+            processed.total_weight_sums,
             processed.all_distance_sums
         )
+
+    def on_processing_error(self, error_message):
+        # Stop the progress bar
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setRange(0, 100)
+
+        # Re-enable buttons
+        self.select_btn.setEnabled(True)
+        self.process_btn.setEnabled(True)
+
+        self.status_label.setText(f"Error processing file: {error_message}")
 
     def open_previous_result(self, item):
         selected_text = item.text()
         for pf in self.processed_files:
-            entry_str = f"{pf.file_name} - {pf.timestamp}"
+            entry_str = f"{pf.file_name} - {pf.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
             if entry_str == selected_text:
                 self.status_label.setText(f"Loading previous result for '{pf.file_name}'...")
                 self.on_mer_list(
