@@ -4,6 +4,7 @@
 /ui/__pycache__/
 outputs
 pdbs
+*.spec
 
 .venv/
 
