@@ -6,3 +6,6 @@ outputs
 pdbs
 
 .venv/
+
+build/
+dist/

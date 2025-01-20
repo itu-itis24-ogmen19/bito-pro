@@ -1,6 +1,6 @@
 import os
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QListWidget, 
+    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QListWidget,
     QHeaderView, QTableWidget, QTableWidgetItem, QPushButton, QFileDialog
 )
 from PySide6.QtCore import Qt
@@ -9,16 +9,20 @@ from PySide6.QtGui import QIcon, QFont
 from ui.resource_locate import resource_path
 from polmst import generate_enhanced_pdb  # Import the function for generating enhanced PDB content
 
+
 class MerListPage(QWidget):
-    def __init__(self, best_source_mer, download_data, processed_files, interactions, total_weight_sums, on_back, on_view_mer):
+    def __init__(self, best_source_mer, download_data, processed_files, interactions,
+                 total_weight_sums, on_back, on_view_mer):
         super().__init__()
         self.best_source_mer = best_source_mer
-        self.download_data = download_data  # Kept for compatibility
+        self.download_data = download_data
         self.processed_files = processed_files
         self.interactions = interactions
         self.total_weight_sums = total_weight_sums
         self.on_back = on_back
         self.on_view_mer = on_view_mer
+
+        self.best_source_row_index = None
 
         main_layout = QHBoxLayout(self)
         self.setLayout(main_layout)
@@ -33,7 +37,6 @@ class MerListPage(QWidget):
         for pf in self.processed_files:
             self.file_list.addItem(f"{pf.file_name} - {pf.timestamp}")
         sidebar.addWidget(self.file_list)
-
         self.file_list.itemDoubleClicked.connect(self.load_previous_result)
 
         # Main area
@@ -47,67 +50,95 @@ class MerListPage(QWidget):
         top_bar.addStretch()
         main_area.addLayout(top_bar)
 
-        self.title_label = QLabel(f"Mers - Best Source: {self.best_source_mer}")
+        # A clickable label for best source
+        self.title_label = QLabel()
         self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setTextFormat(Qt.RichText)
+        self.title_label.setOpenExternalLinks(False)
+        self.title_label.linkActivated.connect(self.locate_best_source_in_table)
         main_area.addWidget(self.title_label)
 
         self.mer_table = QTableWidget()
         self.mer_table.setColumnCount(3)
-        self.mer_table.setHorizontalHeaderLabels(["Mer", "", "Download"])
+        self.mer_table.setHorizontalHeaderLabels([
+            "Center Chosen Mer",   # was "Mer"
+            "View 3D Graph",       # was ""
+            "Download PDB"         # was "Download"
+        ])
         self.mer_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.mer_table.verticalHeader().setVisible(False)
         main_area.addWidget(self.mer_table)
 
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #888;") 
+        self.status_label.setStyleSheet("color: #888;")
         self.status_label.setAlignment(Qt.AlignCenter)
         main_area.addWidget(self.status_label)
 
         main_layout.addLayout(sidebar, 1)
         main_layout.addLayout(main_area, 3)
 
+        # Populate the table
         self.populate_mer_table(self.best_source_mer, self.download_data)
 
     def populate_mer_table(self, best_source_mer, download_data):
-        # Retain the same structure, though we won't use 'download_data' for PDB text
         self.download_data = download_data
         self.best_source_mer = best_source_mer
 
         mer_names = list(self.download_data.keys())
         self.mer_table.setRowCount(len(mer_names))
 
-        check_icon_path = resource_path(os.path.join("assets", "images", "yellow_check.png"))
-        check_icon = QIcon(check_icon_path) if os.path.exists(check_icon_path) else QIcon()
+        arrow_icon_path = resource_path(os.path.join("assets", "images", "yellow_arrow.png"))
+        arrow_icon = QIcon(arrow_icon_path) if os.path.exists(arrow_icon_path) else QIcon()
+
+        magnify_icon_path = resource_path(os.path.join("assets", "images", "magnify_icon.png"))
+        magnify_icon = QIcon(magnify_icon_path) if os.path.exists(magnify_icon_path) else QIcon()
+
+        download_icon_path = resource_path(os.path.join("assets", "images", "download_icon.png"))
+        download_icon = QIcon(download_icon_path) if os.path.exists(download_icon_path) else QIcon()
+
+        self.best_source_row_index = None
 
         for row, mer_name in enumerate(mer_names):
             name_item = QTableWidgetItem(mer_name)
             name_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
 
-            if mer_name == self.best_source_mer and not check_icon.isNull():
-                name_item.setIcon(check_icon)
+            # CASE-INSENSITIVE match, strip extra spaces
+            if mer_name.strip().lower() == self.best_source_mer.strip().lower():
+                print(f"[DEBUG] Found best source match: '{mer_name}' == '{self.best_source_mer}'")
+                name_item.setIcon(arrow_icon)
+                self.best_source_row_index = row
 
             self.mer_table.setItem(row, 0, name_item)
 
-            view_btn = QPushButton("View")
-            view_btn.setToolTip("View the Dijkstra calculation visualization for this Mer.")
+            # Create "View" button with magnifying glass icon
+            view_btn = QPushButton()
+            if not magnify_icon.isNull():
+                view_btn.setIcon(magnify_icon)
+            else:
+                view_btn.setText("View")  # fallback
+            view_btn.setToolTip("View the 3D Graph for this Mer.")
             view_btn.clicked.connect(lambda _, mn=mer_name: self.view_mer(mn))
             self.mer_table.setCellWidget(row, 1, view_btn)
 
-            download_btn = QPushButton("Download")
-            download_btn.setToolTip("Download the enhanced PDB file for this Mer.")
+            # Create "Download" button with download icon
+            download_btn = QPushButton()
+            if not download_icon.isNull():
+                download_btn.setIcon(download_icon)
+            else:
+                download_btn.setText("Download")
+            download_btn.setToolTip("Download the PDB file for this Mer.")
             download_btn.clicked.connect(lambda _, mn=mer_name: self.download_pdb(mn))
             self.mer_table.setCellWidget(row, 2, download_btn)
 
-        self.title_label.setText(f"Mers - Best Source: {self.best_source_mer}")
+        # Make the best source clickable in the title
+        self.title_label.setText(
+            f"Mers - Best Source: <a href='#'>{self.best_source_mer}</a>"
+        )
+
         self.status_label.setText(f"Loaded {len(mer_names)} Mers.")
 
     def view_mer(self, mer_name):
-        """
-        On-demand generation of PDB content for 'mer_name' using the stored processed file data.
-        1) Find the matching ProcessedFile
-        2) Generate an enhanced PDB using the distance map for that mer_name
-        3) Call on_view_mer with the new content
-        """
+        """On-demand generation of PDB content for 'mer_name'."""
         pf = self.find_processed_file()
         if not pf:
             self.status_label.setText("No PDB data found.")
@@ -124,13 +155,10 @@ class MerListPage(QWidget):
             return
 
         self.status_label.setText(f"Viewing Mer '{mer_name}'...")
-        # Pass the generated PDB to the viewer
         self.on_view_mer(mer_name, pdb_content, pf.interactions, pf.total_weight_sums)
 
     def download_pdb(self, mer_name):
-        """
-        On-demand generation of a single PDB file for the chosen mer_name.
-        """
+        """Generate and save a PDB file for the chosen Mer."""
         pf = self.find_processed_file()
         if not pf:
             self.status_label.setText("No PDB data found.")
@@ -146,30 +174,50 @@ class MerListPage(QWidget):
             self.status_label.setText(f"No PDB data generated for {mer_name}.")
             return
 
-        save_path, _ = QFileDialog.getSaveFileName(self, "Save PDB File", f"{mer_name}.pdb", "PDB Files (*.pdb)")
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Save PDB File", f"{mer_name}.pdb", "PDB Files (*.pdb)"
+        )
         if save_path:
             with open(save_path, 'w') as f:
                 f.write(pdb_content)
             self.status_label.setText(f"{mer_name}.pdb saved successfully.")
 
+    def locate_best_source_in_table(self, _link=None):
+        """
+        Highlight/scroll to the best source Mer row if found,
+        otherwise a status message says it wasn't located.
+        """
+        if self.best_source_row_index is not None:
+            self.mer_table.selectRow(self.best_source_row_index)
+            self.mer_table.scrollToItem(
+                self.mer_table.item(self.best_source_row_index, 0)
+            )
+            self.status_label.setText("Best source Mer located in the list.")
+        else:
+            self.status_label.setText("Could not locate best source Mer in the table.")
+
     def load_previous_result(self, item):
-        # Find the corresponding processed file based on the text
+        """Double-click on a previous result in the sidebar to reload its data."""
         selected_text = item.text()
         for pf in self.processed_files:
             entry_str = f"{pf.file_name} - {pf.timestamp}"
             if entry_str == selected_text:
                 self.status_label.setText(f"Loading previous result for '{pf.file_name}'...")
                 self.populate_mer_table(pf.best_source_mer, pf.download_data)
-                self.on_mer_list(pf.best_source_mer, pf.download_data, self.processed_files, pf.interactions, pf.total_weight_sums)
+                self.on_mer_list(
+                    pf.best_source_mer,
+                    pf.download_data,
+                    self.processed_files,
+                    pf.interactions,
+                    pf.total_weight_sums
+                )
                 return
         self.status_label.setText("Could not find the selected previous result.")
 
     def find_processed_file(self):
-        """
-        Return the last processed file or one that matches the current 'best_source_mer' 
-        for convenience. Adjust logic as needed if you have multiple candidates.
-        """
+        """Find the ProcessedFile whose best_source_mer matches the current best_source_mer (case-insensitive)."""
         for pf in self.processed_files:
-            if pf.best_source_mer == self.best_source_mer:
+            # again do a case-insensitive check
+            if pf.best_source_mer.strip().lower() == self.best_source_mer.strip().lower():
                 return pf
         return None

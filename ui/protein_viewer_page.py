@@ -12,8 +12,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QComboBox
 )
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QFont, QPixmap, QIcon
 from PySide6.QtWidgets import QApplication
 
 import vtk
@@ -53,20 +53,30 @@ def get_coolwarm_color(value):
 
 class ProteinViewerPage(QWidget):
     """
-    ProteinViewerPage now supports:
-      - Two display modes ("Global Distance" vs. "Local Edge-Sum").
-      - Distance-based label hiding when camera zooms out.
-      - Locating a particular node (Locate Node) via a drop-down with full-length names.
-      - "Show Node Info" to display selected node's value and connections in a popup.
-      - Black edges and gray edge-value text.
+    ProteinViewerPage now shows in "Show Protein Info":
+      - The chosen PDB file name
+      - The center chosen Mer (self.mer_name)
+      - Total Mers
+      - Total Edges
     """
-    def __init__(self, mer_name, pdb_content, interactions, total_weight_sums, on_back):
+    def __init__(
+        self,
+        mer_name,
+        pdb_content,
+        interactions,
+        total_weight_sums,
+        on_back,
+        pdb_file_name=None  # <--- NEW optional parameter
+    ):
         super().__init__()
         self.mer_name = mer_name
         self.pdb_content = pdb_content
         self.interactions = interactions
-        self.total_weight_sums = total_weight_sums  # Distances from the best source
+        self.total_weight_sums = total_weight_sums
         self.on_back = on_back
+
+        # Store the file name for "Show Protein Info"
+        self.pdb_file_name = pdb_file_name or "Unknown File"
 
         # Data structures
         self.mers = {}
@@ -97,12 +107,20 @@ class ProteinViewerPage(QWidget):
         back_btn.clicked.connect(self.on_back)
         top_bar.addWidget(back_btn, alignment=Qt.AlignLeft)
 
+        # Make the mode label smaller (9pt instead of 11)
         self.mode_label = QLabel("Current Mode: Global Distance")
-        self.mode_label.setFont(QFont("Arial", 11, QFont.Bold))
+        self.mode_label.setFont(QFont("Arial", 9, QFont.Bold))
         top_bar.addWidget(self.mode_label, alignment=Qt.AlignCenter)
 
-        info_btn = QPushButton("Info")
-        info_btn.setToolTip("Learn about the display modes and other features.")
+        # Info button with an icon instead of text:
+        info_btn = QPushButton()
+        info_btn.setToolTip("Information about modes and features.")
+        info_icon_path = resource_path(os.path.join("assets", "images", "info_icon.png"))
+        if os.path.exists(info_icon_path):
+            info_btn.setIcon(QIcon(info_icon_path))
+            info_btn.setIconSize(QSize(24, 24))
+        else:
+            info_btn.setText("Info")
         info_btn.clicked.connect(self.show_info)
         top_bar.addWidget(info_btn, alignment=Qt.AlignRight)
 
@@ -118,10 +136,8 @@ class ProteinViewerPage(QWidget):
 
         # **Node selection**: For full-length names, we set size policy
         self.node_select_combobox = QComboBox()
-        # Ensure no truncation:
         self.node_select_combobox.setSizeAdjustPolicy(QComboBox.AdjustToContents)
-        # Give it enough space so we see the full name:
-        self.node_select_combobox.setMinimumWidth(350)
+        self.node_select_combobox.setMinimumWidth(250)
         self.node_select_combobox.setEnabled(False)
         top_bar.addWidget(self.node_select_combobox)
 
@@ -135,6 +151,12 @@ class ProteinViewerPage(QWidget):
         self.info_node_btn.setEnabled(False)
         self.info_node_btn.clicked.connect(self.show_node_info)
         top_bar.addWidget(self.info_node_btn, alignment=Qt.AlignRight)
+
+        # **Show Protein Info** button
+        self.protein_info_btn = QPushButton("Show Protein Info")
+        self.protein_info_btn.setEnabled(False)
+        self.protein_info_btn.clicked.connect(self.show_protein_info)
+        top_bar.addWidget(self.protein_info_btn, alignment=Qt.AlignRight)
 
         top_bar.addStretch()
         self.main_layout.addLayout(top_bar)
@@ -203,7 +225,9 @@ class ProteinViewerPage(QWidget):
             "LOCATE NODE:\n"
             "   Pick a node from the drop-down, then click 'Locate Node' to center the camera.\n\n"
             "SHOW NODE INFO:\n"
-            "   Displays the selected node's current value and all connections (edges)."
+            "   Displays the selected node's current value and all connections (edges).\n\n"
+            "SHOW PROTEIN INFO:\n"
+            "   Shows how many nodes and edges exist in this loaded protein data."
         )
         QMessageBox.information(self, "Display Modes & Features", info_text)
 
@@ -270,6 +294,7 @@ class ProteinViewerPage(QWidget):
         self.node_select_combobox.setEnabled(True)
         self.locate_btn.setEnabled(True)
         self.info_node_btn.setEnabled(True)
+        self.protein_info_btn.setEnabled(True)
 
         self.draw_graph()
 
@@ -349,7 +374,7 @@ class ProteinViewerPage(QWidget):
         QApplication.processEvents()
 
         # Edges
-        bond_color = [0.3, 0.3, 0.3]  
+        bond_color = [0.3, 0.3, 0.3]
         line_polydata = vtk.vtkPolyData()
         line_points = vtk.vtkPoints()
         lines = vtk.vtkCellArray()
@@ -543,8 +568,7 @@ class ProteinViewerPage(QWidget):
             node_value = self.edge_sum_by_node.get(node_name, 0.0)
             mode_str = "Local Edge-Sum"
 
-        # Gather all connections: from self.interactions
-        # i.e. if from_mer == node_name or to_mer == node_name
+        # Gather all connections
         connections = []
         for inter in self.interactions:
             if inter.from_mer == node_name:
@@ -568,6 +592,29 @@ class ProteinViewerPage(QWidget):
         full_text = "\n".join(info_str)
 
         QMessageBox.information(self, "Node Info", full_text)
+
+    # ----------------------------------------------------------------
+    # Show Protein Info
+    # ----------------------------------------------------------------
+    def show_protein_info(self):
+        """
+        Displays:
+          - The name of the PDB file
+          - The best (center) chosen Mer
+          - How many nodes (mers) exist
+          - How many edges (connections)
+        """
+        node_count = len(self.mer_names)
+        edge_count = len(self.interactions)
+
+        info_text = (
+            f"Protein Info:\n\n"
+            f"Name of the chosen PDB file: {self.pdb_file_name}\n"
+            f"Center chosen Mer: {self.mer_name}\n"
+            f"Total Mers (Nodes): {node_count}\n"
+            f"Total Edges (Connections): {edge_count}\n"
+        )
+        QMessageBox.information(self, "Protein Info", info_text)
 
     # ----------------------------------------------------------------
     # PDB Parsing
