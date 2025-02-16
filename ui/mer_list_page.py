@@ -42,12 +42,18 @@ class MerListPage(QWidget):
         # Main area
         main_area = QVBoxLayout()
 
-        # Top bar for back button
+        # Top bar for Back and global "View Original 3D" button
         top_bar = QHBoxLayout()
         self.back_btn = QPushButton("Back")
         self.back_btn.clicked.connect(self.on_back)
         top_bar.addWidget(self.back_btn, alignment=Qt.AlignLeft)
-        top_bar.addStretch()
+
+        # Global button to view the original (unprocessed) 3D structure.
+        self.view_original_btn = QPushButton("View Original 3D")
+        self.view_original_btn.setToolTip("View the original 3D structure as uploaded.")
+        self.view_original_btn.clicked.connect(self.view_original_global)
+        top_bar.addWidget(self.view_original_btn, alignment=Qt.AlignRight)
+
         main_area.addLayout(top_bar)
 
         # A clickable label for best source
@@ -58,12 +64,13 @@ class MerListPage(QWidget):
         self.title_label.linkActivated.connect(self.locate_best_source_in_table)
         main_area.addWidget(self.title_label)
 
+        # Table with 3 columns: Center Chosen Mer, View 3D Graph, Download PDB
         self.mer_table = QTableWidget()
         self.mer_table.setColumnCount(3)
         self.mer_table.setHorizontalHeaderLabels([
             "Center Chosen Mer",   # was "Mer"
-            "View 3D Graph",       # was ""
-            "Download PDB"         # was "Download"
+            "View 3D Graph",       # enhanced view
+            "Download PDB"         # download enhanced PDB file
         ])
         self.mer_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.mer_table.verticalHeader().setVisible(False)
@@ -110,13 +117,13 @@ class MerListPage(QWidget):
 
             self.mer_table.setItem(row, 0, name_item)
 
-            # Create "View" button with magnifying glass icon
+            # Create "View" button with magnifying glass icon for the enhanced view
             view_btn = QPushButton()
             if not magnify_icon.isNull():
                 view_btn.setIcon(magnify_icon)
             else:
-                view_btn.setText("View")  # fallback
-            view_btn.setToolTip("View the 3D Graph for this Mer.")
+                view_btn.setText("View")
+            view_btn.setToolTip("View the enhanced 3D Graph for this Mer.")
             view_btn.clicked.connect(lambda _, mn=mer_name: self.view_mer(mn))
             self.mer_table.setCellWidget(row, 1, view_btn)
 
@@ -126,7 +133,7 @@ class MerListPage(QWidget):
                 download_btn.setIcon(download_icon)
             else:
                 download_btn.setText("Download")
-            download_btn.setToolTip("Download the PDB file for this Mer.")
+            download_btn.setToolTip("Download the enhanced PDB file for this Mer.")
             download_btn.clicked.connect(lambda _, mn=mer_name: self.download_pdb(mn))
             self.mer_table.setCellWidget(row, 2, download_btn)
 
@@ -138,7 +145,7 @@ class MerListPage(QWidget):
         self.status_label.setText(f"Loaded {len(mer_names)} Mers.")
 
     def view_mer(self, mer_name):
-        """On-demand generation of PDB content for 'mer_name'."""
+        """On-demand generation of enhanced PDB content for 'mer_name'."""
         pf = self.find_processed_file()
         if not pf:
             self.status_label.setText("No PDB data found.")
@@ -154,8 +161,27 @@ class MerListPage(QWidget):
             self.status_label.setText(f"No PDB data found for {mer_name}.")
             return
 
-        self.status_label.setText(f"Viewing Mer '{mer_name}'...")
+        self.status_label.setText(f"Viewing enhanced 3D for '{mer_name}'...")
         self.on_view_mer(mer_name, pdb_content, pf.interactions, pf.total_weight_sums)
+
+    def view_original_global(self):
+        """
+        Opens a 3D view using the original (unprocessed) PDB file content.
+        Since the original structure is identical regardless of the chosen Mer,
+        this global view is shared.
+        """
+        pf = self.find_processed_file()
+        if not pf:
+            self.status_label.setText("No PDB data found.")
+            return
+
+        if not hasattr(pf, "original_content") or not pf.original_content:
+            self.status_label.setText("No original PDB data available.")
+            return
+
+        self.status_label.setText("Viewing original 3D structure...")
+        # Pass a dummy name since the structure is global.
+        self.on_view_mer("Original Structure", pf.original_content, pf.interactions, pf.total_weight_sums)
 
     def download_pdb(self, mer_name):
         """Generate and save a PDB file for the chosen Mer."""
@@ -204,7 +230,7 @@ class MerListPage(QWidget):
             if entry_str == selected_text:
                 self.status_label.setText(f"Loading previous result for '{pf.file_name}'...")
                 self.populate_mer_table(pf.best_source_mer, pf.download_data)
-                self.on_mer_list(
+                self.on_view_mer(
                     pf.best_source_mer,
                     pf.download_data,
                     self.processed_files,
@@ -217,7 +243,6 @@ class MerListPage(QWidget):
     def find_processed_file(self):
         """Find the ProcessedFile whose best_source_mer matches the current best_source_mer (case-insensitive)."""
         for pf in self.processed_files:
-            # again do a case-insensitive check
             if pf.best_source_mer.strip().lower() == self.best_source_mer.strip().lower():
                 return pf
         return None

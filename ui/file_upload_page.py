@@ -19,9 +19,9 @@ class ProcessedFile:
         interactions,
         total_weight_sums,
         timestamp,
-        all_distance_sums
+        all_distance_sums,
+        original_content  # NEW: store the original file content
     ):
-        # [Initialization remains unchanged]
         self.file_name = file_name
         self.file_path = file_path
         self.best_source_mer = best_source_mer
@@ -31,6 +31,7 @@ class ProcessedFile:
         self.total_weight_sums = total_weight_sums
         self.timestamp = timestamp
         self.all_distance_sums = all_distance_sums
+        self.original_content = original_content  # NEW
 
 class WorkerThread(QThread):
     finished = Signal(object)
@@ -102,23 +103,6 @@ class FileUploadPage(QWidget):
         # Top bar with a Back button
         top_bar = QHBoxLayout()
         self.back_btn = QPushButton("Back")
-        # Removed custom stylesheet to revert to original styling
-        # self.back_btn.setStyleSheet("""
-        #     QPushButton {
-        #         background-color: #23272A;
-        #         color: white;
-        #         padding: 10px 20px;
-        #         border: none;
-        #         border-radius: 5px;
-        #         font-size: 14px;
-        #     }
-        #     QPushButton:hover {
-        #         background-color: #2C2F33;
-        #     }
-        #     QPushButton:disabled {
-        #         background-color: #555555;
-        #     }
-        # """)
         self.back_btn.clicked.connect(self.on_back)
         top_bar.addWidget(self.back_btn, alignment=Qt.AlignLeft)
         top_bar.addStretch()
@@ -255,7 +239,11 @@ class FileUploadPage(QWidget):
         self.select_btn.setEnabled(True)
         self.process_btn.setEnabled(True)
 
-        # Create ProcessedFile instance
+        # Read the original file content (unprocessed)
+        with open(self.selected_file, 'r') as f:
+            original_content = f.read()
+
+        # Create ProcessedFile instance (note the new original_content parameter)
         processed = ProcessedFile(
             file_name=os.path.basename(self.selected_file),
             file_path=self.selected_file,
@@ -265,7 +253,8 @@ class FileUploadPage(QWidget):
             interactions=result['interactions'],
             total_weight_sums=result['total_weight_sums'],
             timestamp=datetime.datetime.now(),
-            all_distance_sums=result['all_distance_sums']
+            all_distance_sums=result['all_distance_sums'],
+            original_content=original_content  # NEW: store the original PDB content
         )
         self.processed_files.append(processed)
         self.file_list.addItem(f"{processed.file_name} - {processed.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
