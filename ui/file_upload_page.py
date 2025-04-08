@@ -55,10 +55,11 @@ class WorkerThread(QThread):
             self.error.emit(str(e))
 
 class FileUploadPage(QWidget):
-    def __init__(self, on_back, on_mer_list, processed_files):
+    def __init__(self, on_back, on_mer_list, on_view_raw, processed_files):
         super().__init__()
         self.on_back = on_back
         self.on_mer_list = on_mer_list
+        self.on_view_raw = on_view_raw   # New callback for raw view
         self.processed_files = processed_files
 
         self.selected_file = None
@@ -167,6 +168,30 @@ class FileUploadPage(QWidget):
         self.process_btn.setEnabled(False)
         main_area.addWidget(self.process_btn, alignment=Qt.AlignCenter)
 
+        # View Raw PDB Button (New)
+        self.view_raw_btn = QPushButton("View Raw PDB")
+        self.view_raw_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #23272A;
+                color: white;
+                padding: 10px 30px;
+                border: 2px solid #7289DA;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #2C2F33;
+            }
+            QPushButton:disabled {
+                background-color: #555555;
+                border: 2px solid #888888;
+            }
+        """)
+        self.view_raw_btn.setToolTip("Display the selected PDB file without processing it.")
+        self.view_raw_btn.clicked.connect(self.view_raw_pdb)
+        self.view_raw_btn.setEnabled(False)
+        main_area.addWidget(self.view_raw_btn, alignment=Qt.AlignCenter)
+
         # Progress Bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
@@ -206,9 +231,11 @@ class FileUploadPage(QWidget):
             self.selected_file = file_path
             self.status_label.setText(f"Selected File: {os.path.basename(file_path)}")
             self.process_btn.setEnabled(True)
+            self.view_raw_btn.setEnabled(True)  # Enable raw view button
         else:
             self.status_label.setText("No file selected")
             self.process_btn.setEnabled(False)
+            self.view_raw_btn.setEnabled(False)
 
     def process_file(self):
         if not self.selected_file:
@@ -229,6 +256,14 @@ class FileUploadPage(QWidget):
         self.worker.finished.connect(self.on_processing_finished)
         self.worker.error.connect(self.on_processing_error)
         self.worker.start()
+
+    def view_raw_pdb(self):
+        if not self.selected_file:
+            self.status_label.setText("No file selected.")
+            return
+        with open(self.selected_file, 'r') as f:
+            pdb_content = f.read()
+        self.on_view_raw(pdb_content, self.selected_file)
 
     def on_processing_finished(self, result):
         # Stop the progress bar

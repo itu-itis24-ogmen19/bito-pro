@@ -1,3 +1,4 @@
+# main.py
 import sys
 import os
 import numpy as np
@@ -28,6 +29,7 @@ class MainWindow(QMainWindow):
             self.setCentralWidget(FileUploadPage(
                 on_back=go_to_welcome,
                 on_mer_list=go_to_mer_list,
+                on_view_raw=go_to_raw_viewer,  # New callback for raw view
                 processed_files=self.processed_files
             ))
 
@@ -58,7 +60,6 @@ class MainWindow(QMainWindow):
                 )
             )
 
-        # This function is called when a Mer is selected for viewing
         def go_to_protein_viewer(mer_name, pdb_content, interactions, _unused):
             def on_back():
                 go_to_mer_list(
@@ -70,29 +71,22 @@ class MainWindow(QMainWindow):
                     self.current_all_distance_sums
                 )
 
-            # 1) Find the distance map for the chosen Mer
             if self.current_all_distance_sums and mer_name in self.current_all_distance_sums:
                 distance_map_for_selected_mer = self.current_all_distance_sums[mer_name]
             else:
                 distance_map_for_selected_mer = {}
 
-            # 2) Attempt to find the matching ProcessedFile
-            #    (We assume the one whose best_source_mer matches self.current_best_mer
-            #     or the one containing 'mer_name' in its all_distance_sums.)
             pdb_file_path = None
             for pf in self.processed_files:
-                # If pf has all_distance_sums for mer_name or matches best_source_mer
                 if mer_name in pf.all_distance_sums or pf.best_source_mer == self.current_best_mer:
                     pdb_file_path = pf.file_path
                     break
 
-            # 3) Extract just the filename
             if pdb_file_path:
                 pdb_filename = os.path.basename(pdb_file_path)
             else:
                 pdb_filename = "UnknownFile"
 
-            # 4) Create the ProteinViewerPage, passing in 'pdb_file_name'
             self.setCentralWidget(
                 ProteinViewerPage(
                     mer_name=mer_name,
@@ -100,7 +94,23 @@ class MainWindow(QMainWindow):
                     interactions=interactions,
                     total_weight_sums=distance_map_for_selected_mer,
                     on_back=on_back,
-                    pdb_file_name=pdb_filename  # <--- NEW
+                    pdb_file_name=pdb_filename
+                )
+            )
+
+        def go_to_raw_viewer(pdb_content, file_path):
+            def on_back():
+                go_to_file_upload()
+            pdb_filename = os.path.basename(file_path)
+            self.setCentralWidget(
+                ProteinViewerPage(
+                    mer_name="Raw PDB",
+                    pdb_content=pdb_content,
+                    interactions=[], 
+                    total_weight_sums={},
+                    on_back=on_back,
+                    pdb_file_name=pdb_filename,
+                    raw_mode=True
                 )
             )
 

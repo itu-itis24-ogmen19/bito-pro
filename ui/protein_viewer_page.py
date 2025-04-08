@@ -70,7 +70,8 @@ class ProteinViewerPage(QWidget):
         interactions,
         total_weight_sums,
         on_back,
-        pdb_file_name=None  # optional parameter
+        pdb_file_name=None,  # optional parameter
+        raw_mode=False       # NEW parameter to indicate raw view
     ):
         super().__init__()
         self.mer_name = mer_name
@@ -79,6 +80,7 @@ class ProteinViewerPage(QWidget):
         self.total_weight_sums = total_weight_sums
         self.on_back = on_back
         self.pdb_file_name = pdb_file_name or "Unknown File"
+        self.raw_mode = raw_mode
 
         # Data structures
         self.mers = {}
@@ -300,7 +302,6 @@ class ProteinViewerPage(QWidget):
         self.redraw_scene()
 
     def get_node_size_value(self):
-        # Returns an integer from the combo box (default radius = 0.01 * value)
         try:
             return int(self.node_size_combobox.currentText())
         except:
@@ -349,16 +350,17 @@ class ProteinViewerPage(QWidget):
             positions /= scale
         self.positions = positions
 
-        # Build edge sums
-        self.edge_sum_by_node = {name: 0.0 for name in self.mer_names}
-        for interaction in self.interactions:
-            from_mer = interaction.from_mer
-            to_mer = interaction.to_mer
-            weight = interaction.weight
-            if from_mer in self.edge_sum_by_node:
-                self.edge_sum_by_node[from_mer] += weight
-            if to_mer in self.edge_sum_by_node:
-                self.edge_sum_by_node[to_mer] += weight
+        # Build edge sums (only if not in raw mode)
+        if not self.raw_mode:
+            self.edge_sum_by_node = {name: 0.0 for name in self.mer_names}
+            for interaction in self.interactions:
+                from_mer = interaction.from_mer
+                to_mer = interaction.to_mer
+                weight = interaction.weight
+                if from_mer in self.edge_sum_by_node:
+                    self.edge_sum_by_node[from_mer] += weight
+                if to_mer in self.edge_sum_by_node:
+                    self.edge_sum_by_node[to_mer] += weight
 
         # Populate node selection combo box
         self.node_select_combobox.clear()
@@ -395,10 +397,14 @@ class ProteinViewerPage(QWidget):
             self.progress_bar.setValue(100)
             return
 
-        if self.display_mode == 'distance':
-            node_values = [self.total_weight_sums.get(name, 0.0) for name in filtered_mer_names]
+        # Determine node values based on mode and raw_mode flag
+        if self.raw_mode:
+            node_values = [self.mers[name]['temp'] for name in filtered_mer_names]
         else:
-            node_values = [self.edge_sum_by_node.get(name, 0.0) for name in filtered_mer_names]
+            if self.display_mode == 'distance':
+                node_values = [self.total_weight_sums.get(name, 0.0) for name in filtered_mer_names]
+            else:
+                node_values = [self.edge_sum_by_node.get(name, 0.0) for name in filtered_mer_names]
 
         color_scheme = self.color_scheme_combobox.currentText()
         colors_rgba = []
@@ -462,46 +468,49 @@ class ProteinViewerPage(QWidget):
         self.progress_bar.setValue(70)
         QApplication.processEvents()
 
-        line_polydata = vtk.vtkPolyData()
-        line_points = vtk.vtkPoints()
-        lines = vtk.vtkCellArray()
+        if not self.raw_mode:
+            line_polydata = vtk.vtkPolyData()
+            line_points = vtk.vtkPoints()
+            lines = vtk.vtkCellArray()
 
-        filtered_index = {name: idx for idx, name in enumerate(filtered_mer_names)}
-        edge_midpoints = []
-        edge_weights = []
-        for interaction in self.interactions:
-            if interaction.from_mer in filtered_index and interaction.to_mer in filtered_index:
-                i = filtered_index[interaction.from_mer]
-                j = filtered_index[interaction.to_mer]
-                p1_id = line_points.InsertNextPoint(filtered_positions[i])
-                p2_id = line_points.InsertNextPoint(filtered_positions[j])
-                line_cell = vtk.vtkLine()
-                line_cell.GetPointIds().SetId(0, p1_id)
-                line_cell.GetPointIds().SetId(1, p2_id)
-                lines.InsertNextCell(line_cell)
-                midpoint = (np.array(filtered_positions[i]) + np.array(filtered_positions[j])) / 2.0
-                edge_midpoints.append(midpoint)
-                edge_weights.append(interaction.weight)
-        line_polydata.SetPoints(line_points)
-        line_polydata.SetLines(lines)
-        line_mapper = vtk.vtkPolyDataMapper()
-        line_mapper.SetInputData(line_polydata)
-        bond_color = [0.3, 0.3, 0.3]
-        line_actor = vtk.vtkActor()
-        line_actor.SetMapper(line_mapper)
-        line_actor.GetProperty().SetColor(bond_color)
-        line_actor.GetProperty().SetOpacity(0.5)
-        line_actor.GetProperty().SetLineWidth(1.0)
-        self.renderer.AddActor(line_actor)
-
+            filtered_index = {name: idx for idx, name in enumerate(filtered_mer_names)}
+            edge_midpoints = []
+            edge_weights = []
+            for interaction in self.interactions:
+                if interaction.from_mer in filtered_index and interaction.to_mer in filtered_index:
+                    i = filtered_index[interaction.from_mer]
+                    j = filtered_index[interaction.to_mer]
+                    p1_id = line_points.InsertNextPoint(filtered_positions[i])
+                    p2_id = line_points.InsertNextPoint(filtered_positions[j])
+                    line_cell = vtk.vtkLine()
+                    line_cell.GetPointIds().SetId(0, p1_id)
+                    line_cell.GetPointIds().SetId(1, p2_id)
+                    lines.InsertNextCell(line_cell)
+                    midpoint = (np.array(filtered_positions[i]) + np.array(filtered_positions[j])) / 2.0
+                    edge_midpoints.append(midpoint)
+                    edge_weights.append(interaction.weight)
+            line_polydata.SetPoints(line_points)
+            line_polydata.SetLines(lines)
+            line_mapper = vtk.vtkPolyDataMapper()
+            line_mapper.SetInputData(line_polydata)
+            bond_color = [0.3, 0.3, 0.3]
+            line_actor = vtk.vtkActor()
+            line_actor.SetMapper(line_mapper)
+            line_actor.GetProperty().SetColor(bond_color)
+            line_actor.GetProperty().SetOpacity(0.5)
+            line_actor.GetProperty().SetLineWidth(1.0)
+            self.renderer.AddActor(line_actor)
         self.progress_bar.setValue(85)
         QApplication.processEvents()
 
         for idx, name in enumerate(filtered_mer_names):
-            if self.display_mode == 'distance':
-                node_val = self.total_weight_sums.get(name, 0.0)
+            if self.raw_mode:
+                node_val = self.mers[name]['temp']
             else:
-                node_val = self.edge_sum_by_node.get(name, 0.0)
+                if self.display_mode == 'distance':
+                    node_val = self.total_weight_sums.get(name, 0.0)
+                else:
+                    node_val = self.edge_sum_by_node.get(name, 0.0)
             label_text = f"{name} ({node_val:.2f})"
             vector_text = vtk.vtkVectorText()
             vector_text.SetText(label_text)
@@ -520,22 +529,23 @@ class ProteinViewerPage(QWidget):
             self.renderer.AddActor(text_actor)
             self.node_text_actors.append(text_actor)
 
-        for midpoint, weight in zip(edge_midpoints, edge_weights):
-            if math.isinf(weight):
-                continue
-            label_text = f"{weight:.2f}"
-            vector_text = vtk.vtkVectorText()
-            vector_text.SetText(label_text)
-            text_mapper = vtk.vtkPolyDataMapper()
-            text_mapper.SetInputConnection(vector_text.GetOutputPort())
-            text_actor = vtk.vtkFollower()
-            text_actor.SetMapper(text_mapper)
-            text_actor.SetScale(0.005, 0.005, 0.005)
-            text_actor.SetPosition(midpoint[0], midpoint[1], midpoint[2])
-            text_actor.SetCamera(self.renderer.GetActiveCamera())
-            text_actor.GetProperty().SetColor(0.5, 0.5, 0.5)
-            self.renderer.AddActor(text_actor)
-            self.edge_text_actors.append(text_actor)
+        if not self.raw_mode:
+            for midpoint, weight in zip(edge_midpoints, edge_weights):
+                if math.isinf(weight):
+                    continue
+                label_text = f"{weight:.2f}"
+                vector_text = vtk.vtkVectorText()
+                vector_text.SetText(label_text)
+                text_mapper = vtk.vtkPolyDataMapper()
+                text_mapper.SetInputConnection(vector_text.GetOutputPort())
+                text_actor = vtk.vtkFollower()
+                text_actor.SetMapper(text_mapper)
+                text_actor.SetScale(0.005, 0.005, 0.005)
+                text_actor.SetPosition(midpoint[0], midpoint[1], midpoint[2])
+                text_actor.SetCamera(self.renderer.GetActiveCamera())
+                text_actor.GetProperty().SetColor(0.5, 0.5, 0.5)
+                self.renderer.AddActor(text_actor)
+                self.edge_text_actors.append(text_actor)
 
         self.renderer.ResetCamera()
         camera = self.renderer.GetActiveCamera()
@@ -607,18 +617,23 @@ class ProteinViewerPage(QWidget):
         node_name = self.node_select_combobox.currentText()
         if node_name not in self.mer_names:
             return
-        if self.display_mode == 'distance':
-            node_value = self.total_weight_sums.get(node_name, 0.0)
-            mode_str = "Global Distance"
+        if self.raw_mode:
+            node_value = self.mers[node_name]['temp']
+            mode_str = "Raw TempFactor"
         else:
-            node_value = self.edge_sum_by_node.get(node_name, 0.0)
-            mode_str = "Local Edge-Sum"
+            if self.display_mode == 'distance':
+                node_value = self.total_weight_sums.get(node_name, 0.0)
+                mode_str = "Global Distance"
+            else:
+                node_value = self.edge_sum_by_node.get(node_name, 0.0)
+                mode_str = "Local Edge-Sum"
         connections = []
-        for inter in self.interactions:
-            if inter.from_mer == node_name:
-                connections.append((inter.to_mer, inter.weight))
-            elif inter.to_mer == node_name:
-                connections.append((inter.from_mer, inter.weight))
+        if not self.raw_mode:
+            for inter in self.interactions:
+                if inter.from_mer == node_name:
+                    connections.append((inter.to_mer, inter.weight))
+                elif inter.to_mer == node_name:
+                    connections.append((inter.from_mer, inter.weight))
         info_str = [f"Node: {node_name}", f"Current Mode: {mode_str}", f"Node Value: {node_value:.3f}\n"]
         if connections:
             info_str.append("Connections:")
@@ -634,7 +649,7 @@ class ProteinViewerPage(QWidget):
     # ----------------------------------------------------------------
     def show_protein_info(self):
         node_count = len(self.mer_names)
-        edge_count = len(self.interactions)
+        edge_count = len(self.interactions) if not self.raw_mode else 0
         info_text = (
             f"Protein Info:\n\n"
             f"Name of the chosen PDB file: {self.pdb_file_name}\n"
@@ -661,8 +676,13 @@ class ProteinViewerPage(QWidget):
                     x = float(line[30:38].strip())
                     y = float(line[38:46].strip())
                     z = float(line[46:54].strip())
-                    if mer_name not in mers:
-                        mers[mer_name] = {'position': (x, y, z), 'bond_count': 0}
+                    if self.raw_mode:
+                        temp = float(line[60:66].strip())
+                        if mer_name not in mers:
+                            mers[mer_name] = {'position': (x, y, z), 'temp': temp}
+                    else:
+                        if mer_name not in mers:
+                            mers[mer_name] = {'position': (x, y, z), 'bond_count': 0}
                 except ValueError:
                     pass
         return mers, None
