@@ -1,11 +1,15 @@
 import math
 import logging
 import heapq
+from io import StringIO
 from models import Atom, Mer, Location, Interaction
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# ----------------------------------------------------------------------
+# Parsing helpers (unchanged)
+# ----------------------------------------------------------------------
 def read_input_file(file_path):
     with open(file_path, 'r') as f:
         return f.readlines()
@@ -49,6 +53,9 @@ def parse_atom_line(line):
     except:
         return None
 
+# ----------------------------------------------------------------------
+# Graph construction helpers (unchanged)
+# ----------------------------------------------------------------------
 def calculate_interactions(mers):
     mer_list = list(mers.values())
 
@@ -81,19 +88,13 @@ def calculate_interactions(mers):
     return interactions
 
 def build_adjacency_map(mers):
-    """
-    Return { mer_name: { neighbor_name: weight, ... }, ... }
-    for all Mers, including possibly disconnected ones.
-    """
-    adjacency_map = {}
-    for mer in mers.values():
-        adjacency_map[mer.name] = {}
+    adjacency_map = {m.name: {} for m in mers.values()}
 
     for from_mer in mers.values():
         for to_mer_name, bond_count in from_mer.bond_count.items():
             if bond_count > 0 and to_mer_name in mers:
                 to_mer = mers[to_mer_name]
-                affinity = bond_count / math.sqrt(len(from_mer.atoms)*len(to_mer.atoms))
+                affinity = bond_count / math.sqrt(len(from_mer.atoms) * len(to_mer.atoms))
                 weight = 1.0 / affinity
                 adjacency_map[from_mer.name][to_mer_name] = weight
                 adjacency_map[to_mer_name][from_mer.name] = weight
@@ -123,9 +124,6 @@ def dijkstra(adjacency_map, source_mer):
     return distances
 
 def find_connected_components(adjacency_map):
-    """
-    Returns a list of components, where each component is a set of Mer names.
-    """
     visited = set()
     components = []
 
@@ -146,113 +144,92 @@ def find_connected_components(adjacency_map):
     return components
 
 def prune_to_component(adjacency_map, keep_set):
-    """
-    Build a sub‐map that has only the nodes in keep_set
-    and edges among them.
-    """
     new_map = {}
     for m in keep_set:
         if m in adjacency_map:
-            # keep only neighbors also in keep_set
-            sub_nbrs = {}
-            for nbr, w in adjacency_map[m].items():
-                if nbr in keep_set:
-                    sub_nbrs[nbr] = w
+            sub_nbrs = {nbr: w for nbr, w in adjacency_map[m].items() if nbr in keep_set}
             new_map[m] = sub_nbrs
     return new_map
 
 def prune_interactions(interactions, sub_map):
-    """
-    Keep only those interactions whose from/to are in sub_map.
-    """
-    filtered = []
-    for inter in interactions:
-        if inter.from_mer in sub_map and inter.to_mer in sub_map:
-            filtered.append(inter)
-    return filtered
+    return [i for i in interactions if i.from_mer in sub_map and i.to_mer in sub_map]
 
 def prune_mers(mers, sub_map):
-    """
-    Keep only Mer objects in sub_map.
-    """
-    filtered = {}
-    for m in sub_map:
-        if m in mers:
-            filtered[m] = mers[m]
-    return filtered
+    return {m: mers[m] for m in sub_map if m in mers}
 
+# ----------------------------------------------------------------------
+# *** UPDATED FUNCTION ***
+# ----------------------------------------------------------------------
 def generate_enhanced_pdb(weights, source_mer, original_file, mers):
-    from io import StringIO
-    output_buffer = StringIO()
+    """
+    Return a PDB that keeps every original atom record so the
+    downloaded file’s atom count matches the input exactly.
 
-    with open(original_file, 'r') as reader:
-        for line in reader:
-            if line.startswith("ATOM") or line.startswith("HETATM"):
-                break
-            output_buffer.write(line)
+    For each atom we overwrite its B-factor (TempFactor column)
+    with the weight/dist-to-source of its parent Mer, allowing
+    external tools to colour by that value.
 
-    output_buffer.write(f"REMARK Weights from source mer {source_mer} in TempFactor.\n\n")
+    A single REMARK (type 999) is added just before the first
+    coordinate line to document what the B-factor encodes.
+    """
+    out = StringIO()
 
-    for mer, dist_val in weights.items():
-        if mer in mers and mers[mer].center_of_mass is not None:
-            loc = mers[mer].center_of_mass
-        else:
-            loc = Location(0,0,0)
+    with open(original_file, "r") as pdb_in:
+        wrote_remark = False
 
-        try:
-            residue_number = int(mer.split('-')[1].split('(')[0])
-        except:
-            residue_number = 0
-        try:
-            chain_id = mer.split('(')[1][0]
-        except:
-            chain_id = ' '
+        for line in pdb_in:
+            is_atom = line.startswith("ATOM") or line.startswith("HETATM")
 
-        output_buffer.write(
-            "ATOM  {:>5d} {:<4s} {:>3s} {:1s}{:>4d}    "
-            "{:>8.3f}{:>8.3f}{:>8.3f}{:>6.2f}{:>6.2f}          {:2s}\n".format(
-                0, "CA", mer.split('-')[0],
-                chain_id, residue_number,
-                loc.x, loc.y, loc.z,
-                1.0, dist_val, ""
-            )
-        )
+            # ----------------------------------------------------------
+            # Insert one explanatory remark before the first ATOM line
+            # ----------------------------------------------------------
+            if is_atom and not wrote_remark:
+                out.write(f"REMARK 999  Distances from {source_mer} are stored in the B-factor column\n")
+                wrote_remark = True
 
-    return output_buffer.getvalue()
+            # ----------------------------------------------------------
+            # If this is a coordinate line, patch columns 61-66
+            # ----------------------------------------------------------
+            if is_atom and len(line) >= 66:
+                resname = line[17:20].strip()
+                chain   = line[21].strip()
+                resnum  = line[22:26].strip()
+                mer_name = f"{resname}-{resnum}({chain})"
 
+                new_b = weights.get(mer_name, None)
+                if new_b is None or math.isinf(new_b) or math.isnan(new_b):
+                    # keep original record untouched
+                    out.write(line)
+                else:
+                    new_b = min(new_b, 999.99)  # fit into %6.2f
+                    patched = f"{line[:60]}{new_b:6.2f}{line[66:]}"
+                    out.write(patched)
+            else:
+                out.write(line)
+
+    return out.getvalue()
+
+# ----------------------------------------------------------------------
+# Main processing pipeline (unchanged)
+# ----------------------------------------------------------------------
 def process_pdb_file(file_path):
-    """
-    1) Parse PDB -> build Mers
-    2) Calculate interactions
-    3) Build adjacency map
-    4) Find all connected components -> pick the LARGEST
-    5) Restrict adjacency_map, interactions, and mers to that largest component
-    6) Compute best_source_mer in that largest component
-    7) Do a final pass of Dijkstra for final distances
-    """
-    # 1) Parse
     raw_lines = read_input_file(file_path)
     mers = parse_atoms(raw_lines)
-    # 2) Interactions
+
     interactions = calculate_interactions(mers)
-    # 3) Adjacency
     adjacency_map = build_adjacency_map(mers)
 
-    # 4) Find largest connected component
     comps = find_connected_components(adjacency_map)
-    # pick the largest by node count
-    largest_comp = max(comps, key=len)  # or handle tie breaks as you like
+    largest_comp = max(comps, key=len)
 
-    # 5) Prune everything outside that largest component
     adjacency_map = prune_to_component(adjacency_map, largest_comp)
-    interactions = prune_interactions(interactions, adjacency_map)
-    mers = prune_mers(mers, adjacency_map)
+    interactions  = prune_interactions(interactions, adjacency_map)
+    mers          = prune_mers(mers, adjacency_map)
 
-    # 6) Find best_source_mer in that largest component
-    #    by scanning all Mers in the largest comp
     best_source_mer = None
     min_sum_dist = math.inf
     all_distance_sums = {}
+
     for mer_name in largest_comp:
         dist_map = dijkstra(adjacency_map, mer_name)
         total_dist = sum(d for d in dist_map.values() if not math.isinf(d))
@@ -261,9 +238,13 @@ def process_pdb_file(file_path):
             min_sum_dist = total_dist
             best_source_mer = mer_name
 
-    # 7) The final distances from best_source_mer
     distances_best = all_distance_sums[best_source_mer]
-    total_weight_sums = {m: distances_best[m] for m in distances_best}
+    total_weight_sums = dict(distances_best)
 
-    # Return everything
-    return best_source_mer, mers, total_weight_sums, interactions, all_distance_sums
+    return (
+        best_source_mer,
+        mers,
+        total_weight_sums,
+        interactions,
+        all_distance_sums,
+    )
